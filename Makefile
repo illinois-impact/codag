@@ -1,47 +1,58 @@
-CC   =gcc
+CC   = gcc
 CXX  = g++
 NVCC = nvcc
 
-TARGET_EXEC ?= a.out
-
 BUILD_DIR ?= ./build
-SRC_DIRS ?= ./src ./include
+SRC_DIRS ?= ./src
+INC_DIRS ?= ./include
+EXE_DIR ?= $(BUILD_DIR)/exec
 
-SRCS := $(shell find $(SRC_DIRS) -name *.cpp -or -name *.c -or -name *.s)
-OBJS := $(SRCS:%=$(BUILD_DIR)/%.o)
+SRCS := $(shell find $(SRC_DIRS) -name *.cpp -or -name *.c -or -name *.s -or -name *.cu)
+SRCS_NAMES := $(shell find $(SRC_DIRS) -name *.cpp -or -name *.c -or -name *.s -or -name *.cu -printf "%f\n")
+OBJS := $(SRCS:%=$(BUILD_DIR)/obj/%.o)
+EXES := $(SRCS:%=$(BUILD_DIR)/exe/%.exe)
 DEPS := $(OBJS:.o=.d)
 
-INC_DIRS := $(shell find $(SRC_DIRS) -type d)
+INCL_DIRS := $(shell find $(INC_DIRS) -type d)  
+
 #INC_DIRS  := ./include
-INC_FLAGS := $(addprefix -I,$(INC_DIRS))
+INC_FLAGS := $(addprefix -I,$(INCL_DIRS))
+LDFLAGS := 
+CPPFLAGS ?= $(INC_FLAGS) -Wall -pthread -MMD -MP -shared -fPIC -std=c++11 -O3 -mavx -ftree-vectorize -fopt-info-vec
+#CUDAFLAGS = $(INC_FLAGS) -std=c++11 -O3 -DCUDA -DNOT_IMPL -arch=sm_35 -gencode=arch=compute_35,code=sm_35 -gencode=arch=compute_35,code=compute_35 #-gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_75,code=compute_75
+#CUDAFLAGS = $(INC_FLAGS) -std=c++11 -O3 -g -G -DCUDA -DNOT_IMPL -lineinfo -arch=sm_70 -gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_70,code=compute_70 # -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_75,code=compute_75
+CUDAFLAGS = $(INC_FLAGS) -g -lineinfo -std=c++11 -O3 -DCUDA -DNOT_IMPL -arch=sm_70 -gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_70,code=compute_70 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_75,code=compute_75
 
-CPPFLAGS ?= $(INC_FLAGS) -Wall -pthread -MMD -MP -shared -fPIC -std=c++11
-CUDAFLAGS ?= -std=c++11 -Wall -MMD -MP -arch=sm_70
 
-$(BUILD_DIR)/$(TARGET_EXEC): $(OBJS)
-	$(CXX) $(OBJS) -o $@ $(LDFLAGS)
+all: objs exes
+
+objs: $(OBJS)
+
+exes: $(EXES)
+
+$(BUILD_DIR)/exe/%.exe: $(BUILD_DIR)/obj/%.o
+	$(MKDIR_P) $(dir $@)
+	$(CXX) $< -o $@ $(LDFLAGS)
 
 # assembly
-$(BUILD_DIR)/%.s.o: %.s
+$(BUILD_DIR)/obj/%.s.o: %.s
 	$(MKDIR_P) $(dir $@)
 	$(AS) $(ASFLAGS) -c $< -o $@
 
 # c source
-$(BUILD_DIR)/%.c.o: %.c
+$(BUILD_DIR)/obj/%.c.o: %.c
 	$(MKDIR_P) $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 # c++ source
-$(BUILD_DIR)/%.cpp.o: %.cpp
+$(BUILD_DIR)/obj/%.cpp.o: %.cpp
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 # cuda source
-$(BUILD_DIR)/%.cu.o: %.cu
+$(BUILD_DIR)/obj/%.cu.o: %.cu
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) $(CUDAFLAGS) -c $< -o $@
-
-
 
 .PHONY: clean
 
