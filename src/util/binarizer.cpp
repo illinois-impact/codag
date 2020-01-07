@@ -14,7 +14,7 @@ static void show_usage(const char* name) {
 	      << "\t\t6\tint32\n"
 	      << "\t\t7\tint64\n"
 	      << "\t\t8\timestamp\n"
-	      << "\t\t8\tstr\n"
+	      << "\t\t9\tstr\n"
 	      << "\t\t10\tsp\n"
 	      << "\t\t11\tdp\n"
               << std::endl;
