@@ -33,16 +33,11 @@ namespace lzss {
 	    
 
 	    while (consumed_bytes < my_chunk_size) {
-		//fill up lookahead buffer
-		if (counsumed_bytes < my_chunk_size) {
-		    while (lookahead_count < LOOKAHEAD_SIZE) {
-			if (counsumed_bytes < my_chunk_size)
-			    lookahead[(lookahead_head + (lookahead_count++)) % LOOKAHEAD_SIZE] =
-				in[in_start_idx + (consumed_bytes++)];
-			else
-			    break;
-		    }
-		}
+	      //fill up lookahead buffer
+	      while ((lookahead_count < LOOKAHEAD_SIZE) && (counsumed_bytes < my_chunk_size))  {
+		lookahead[(lookahead_head + (lookahead_count++)) % LOOKAHEAD_SIZE] =
+		  in[in_start_idx + (consumed_bytes++)];
+	      }
 		    
 		uint32_t offset = 0;
 		uint32_t length = 0;
@@ -56,7 +51,7 @@ namespace lzss {
 		    hist[hist_head] = v;
 		    hist_head = (hist_head+1) % HIST_SIZE;
 		    hist_count = (hist_count == HIST_SIZE) ? hist_count : (hist_count+1);
-		    header_byte = (header_byte << 1) | 1;
+		    header_byte = (header_byte | 1);
 		    
 		    
 		    
@@ -70,18 +65,23 @@ namespace lzss {
 			out[out_start_idx + (out_bytes++)] = v & 0x00FF;
 			v >>= 8;
 		    }
+		    uint32_t hist_start = hist_head+hist_count;
+		    for (size_t i = 0; i < length; i++) {
+			hist[(hist_start+i) % HIST_SIZE] = lookahead[(lookahead_head+i) % HIST_SIZE];
+		    }
 		    
 		    lookahead_head = (lookahead_head + length) % LOOKAHEAD_SIZE;
 		    lookahead_count -= length;
-		    hist_head = (hist_head+length) % HIST_SIZE;
-		    hist_count = ((hist_count + length) >= HIST_SIZE) ? HIST_SIZE : (hist_count+length);
-		    
-		    int offset_start = mod(hist_count - offset, HIST_SIZE);
-
-		    for (size_t i = 0; i < length; i++) {
-			hist[(hist_head+hist_count+i) % HIST_SIZE] = hist[(offset_start+i) % HIST_SIZE];
+		    hist_count += length;
+		    if (hist_count > HIST_SIZE) {
+		      hist_head = (hist_head + (HIST_SIZE-hist_count)) % HIST_SIZE;
+		      hist_count = HIST_SIZE:
 		    }
-		    header_byte = (header_byte << 1);
+		    
+		    //int offset_start = mod(hist_count - offset, HIST_SIZE);
+
+		    
+		    //header_byte = (header_byte << 1);
 		}
 		if ((++blocks) == 8) {
 		    out[out_start_idx + cur_header_byte_pos] = header_byte;
@@ -89,6 +89,8 @@ namespace lzss {
 		    blocks = 0;
 		    cur_header_byte_pos = out_bytes++;
 		}
+		else
+		  header_byte <<= 1;
 	    }
 	    if (blocks != 0) {
 		out[out_start_idx + cur_header_byte_pos] = header_byte;
