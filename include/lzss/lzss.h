@@ -151,6 +151,7 @@ namespace lzss {
 	    lens[tid] = out_bytes;
 	    if (out_bytes > my_chunk_size)
 		printf("comrpessed larger than uncompressed\n");
+	    printf("%llu done\n", (unsigned long long) tid);
 
 	}
 	
