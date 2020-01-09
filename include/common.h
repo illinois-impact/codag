@@ -6,8 +6,9 @@
 #include <cerrno>
 
 
+__host__ __device__
 constexpr uint32_t log2(uint32_t n) {
-    return ( (n<2) ? 1 : 1+log2(n/2));
+    return ( (n<2) ? ((n!=0) ? 1 : 0) : 1+log2(n/2));
 }
 
 template<typename T>
@@ -17,8 +18,13 @@ constexpr T ceil(T a, T b) {
 }
 
 
+__host__ __device__
+constexpr uint32_t bitsNeeded(uint32_t n) {
+  return n <= 1 ? 0 : 1 + bitsNeeded((n + 1) / 2);
+}
+
 template<typename T>
-    __host__ __device__
+__host__ __device__
 constexpr T pow(T base, T exponent) {
     return exponent == 0 ? 1 : base * pow(base, exponent - 1);
 }

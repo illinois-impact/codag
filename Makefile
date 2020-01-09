@@ -21,7 +21,7 @@ LDFLAGS :=
 CPPFLAGS ?= $(INC_FLAGS) -Wall -pthread -MMD -MP -shared -fPIC -std=c++11 -O3 -mavx -ftree-vectorize -fopt-info-vec
 #CUDAFLAGS = $(INC_FLAGS) -std=c++11 -O3 -DCUDA -DNOT_IMPL -arch=sm_35 -gencode=arch=compute_35,code=sm_35 -gencode=arch=compute_35,code=compute_35 #-gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_75,code=compute_75
 #CUDAFLAGS = $(INC_FLAGS) -std=c++11 -O3 -g -G -DCUDA -DNOT_IMPL -lineinfo -arch=sm_70 -gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_70,code=compute_70 # -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_75,code=compute_75
-CUDAFLAGS = $(INC_FLAGS) -g -lineinfo --expt-relaxed-constexpr -std=c++11 -O3 -DCUDA -DNOT_IMPL -arch=sm_70 -gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_70,code=compute_70 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_75,code=compute_75
+CUDAFLAGS = $(INC_FLAGS) -v -g -lineinfo --expt-relaxed-constexpr -std=c++11 -O3 -DCUDA -DNOT_IMPL -arch=sm_70 -gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_70,code=compute_70 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_75,code=compute_75
 
 
 all: objs exes

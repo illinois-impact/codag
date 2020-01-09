@@ -8,6 +8,7 @@
 #include <sys/stat.h> 
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <chrono>
 
 int main(int argc, char** argv) {
     if (argc < 3) {
@@ -25,18 +26,20 @@ int main(int argc, char** argv) {
     const char* output = decomp ? argv[3] : argv[2];
 
     if (!decomp) {
+	std::chrono::high_resolution_clock::time_point total_start = std::chrono::high_resolution_clock::now();
 	int in_fd;
 	struct stat in_sb;
 	void* in;
 
 	int out_fd;
+	struct stat out_sb;
 	void* out;
 
 	if((in_fd = open(input, O_RDONLY)) == 0) {
 	    printf("Fatal Error: INPUT File open error\n");
 	    return -1;
 	}
-	if((out_fd = open(output, O_WRONLY | O_TRUNC | O_CREAT)) == 0) {
+	if((out_fd = open(output, O_RDWR | O_TRUNC | O_CREAT, S_IRWXU | S_IRGRP | S_IROTH)) == 0) {
 	    printf("Fatal Error: OUTPUT File open error\n");
 	    return -1;
 	}
@@ -53,11 +56,15 @@ int main(int argc, char** argv) {
 	uint8_t* in_ = (uint8_t*) in;
 	uint8_t* out_;
 	uint64_t out_size;
+	std::chrono::high_resolution_clock::time_point compress_start = std::chrono::high_resolution_clock::now();
 	lzss::compress_gpu(in_, &out_, in_sb.st_size, &out_size);
+	std::chrono::high_resolution_clock::time_point compress_end = std::chrono::high_resolution_clock::now();
 
-    
-	if(ftruncate(out_fd, out_size) == -1) PRINT_ERROR;
-	out = mmap(nullptr, out_size, PROT_WRITE, MAP_PRIVATE, out_fd, 0);
+	fstat(out_fd, &out_sb);
+	if (out_sb.st_size != out_size) {
+	    if(ftruncate(out_fd, out_size) == -1) PRINT_ERROR;
+	}
+	out = mmap(nullptr, out_size, PROT_WRITE | PROT_READ, MAP_SHARED, out_fd, 0);
 
 	memcpy(out, out_, out_size);
 	if(munmap(in, in_sb.st_size) == -1) PRINT_ERROR;
@@ -65,5 +72,13 @@ int main(int argc, char** argv) {
 
 	close(in_fd);
 	close(out_fd);
+	std::chrono::high_resolution_clock::time_point total_end = std::chrono::high_resolution_clock::now();
+
+	std::chrono::duration<double> total = std::chrono::duration_cast<std::chrono::duration<double>>(total_end - total_start);
+	std::chrono::duration<double> comp = std::chrono::duration_cast<std::chrono::duration<double>>(compress_end - compress_start);
+	std::chrono::duration<double> wrt = std::chrono::duration_cast<std::chrono::duration<double>>(total_end - compress_end);
+	std::cout << "Total time: " << total.count() << " secs\n";
+	std::cout << "Compress time: " << comp.count() << " secs\n";
+	std::cout << "Write time: " << wrt.count() << " secs\n";
     }
 }
