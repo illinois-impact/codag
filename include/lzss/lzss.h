@@ -1,12 +1,14 @@
 #include <common.h>
+#include <cassert>
 #include <thrust/scan.h>
 #include <thrust/execution_policy.h>
 
 constexpr   uint16_t THRDS_SM_() { return (2048); }
-constexpr   uint16_t BLK_SIZE_() { return (32); }
+constexpr   uint16_t BLK_SIZE_() { return (1024); }
 constexpr   uint16_t BLKS_SM_()  { return (THRDS_SM_()/BLK_SIZE_()); }
-constexpr   uint64_t GRID_SIZE_() { return (128); }
+constexpr   uint64_t GRID_SIZE_() { return (1024); }
 constexpr   uint64_t NUM_CHUNKS_() { return (GRID_SIZE_()*BLK_SIZE_()); }
+constexpr   uint64_t CHUNK_SIZE_() { return (256*1024); }
 constexpr   uint64_t HEADER_SIZE_() { return (1); }
 constexpr   uint32_t OVERHEAD_PER_CHUNK_(uint32_t d) { return (ceil<uint32_t>(d,(HEADER_SIZE_()*8))+1); } 
 constexpr   uint32_t HIST_SIZE_() { return 4096; }
@@ -17,12 +19,16 @@ constexpr   uint32_t MIN_MATCH_LENGTH_() { return (ceil<uint32_t>((OFFSET_SIZE_(
 constexpr   uint32_t MAX_MATCH_LENGTH_() { return (pow<uint32_t, uint32_t>(2,LENGTH_SIZE_()) + MIN_MATCH_LENGTH_()); }
 constexpr   uint8_t DEFAULT_CHAR_() { return ' '; }
 constexpr   uint32_t HEAD_INTS_() { return 6; }
+constexpr   uint32_t READ_UNITS_() { return 4; }
+
+constexpr   uint32_t LOOKAHEAD_UNITS_() { return LOOKAHEAD_SIZE_()/READ_UNITS_(); }
 
 #define BLKS_SM                           BLKS_SM_()
 #define THRDS_SM                          THRDS_SM_()
 #define BLK_SIZE			  BLK_SIZE_()			  
 #define GRID_SIZE			  GRID_SIZE_()			  
-#define NUM_CHUNKS			  NUM_CHUNKS_()			  
+#define NUM_CHUNKS			  NUM_CHUNKS_()
+#define CHUNK_SIZE                        CHUNK_SIZE_()
 #define HEADER_SIZE			  HEADER_SIZE_()			  
 #define OVERHEAD_PER_CHUNK(d)       	  OVERHEAD_PER_CHUNK_(d)	  
 #define HIST_SIZE			  HIST_SIZE_()			  
@@ -32,7 +38,9 @@ constexpr   uint32_t HEAD_INTS_() { return 6; }
 #define MIN_MATCH_LENGTH		  MIN_MATCH_LENGTH_()		  
 #define MAX_MATCH_LENGTH		  MAX_MATCH_LENGTH_()		  
 #define DEFAULT_CHAR			  DEFAULT_CHAR_()			  
-#define HEAD_INTS                         HEAD_INTS_()                         
+#define HEAD_INTS                         HEAD_INTS_()
+#define READ_UNITS                        READ_UNITS_()
+#define LOOKAHEAD_UNITS                   LOOKAHEAD_UNITS_()
 
 
 namespace lzss {
@@ -80,16 +88,24 @@ namespace lzss {
 	if (tid < n_chunks) {
 	    uint64_t rem = in_n_bytes % in_chunk_size;
 	    uint64_t my_chunk_size = ((tid == (n_chunks - 1)) && (rem)) ? rem : in_chunk_size;
-	    uint64_t in_start_idx = tid * in_chunk_size;
+	    uint64_t in_start_idx = tid * (in_chunk_size/READ_UNITS);
 	    uint64_t out_start_idx = tid * out_chunk_size;
 
 	    uint8_t hist[HIST_SIZE] = {DEFAULT_CHAR};
+	    
+	    
 	    uint8_t lookahead[LOOKAHEAD_SIZE];
+	    uint32_t* lookahead_4 = (uint32_t*) lookahead;
 	    uint32_t hist_head  = 0;
 	    uint32_t hist_count = 0;
 	    uint32_t lookahead_head = 0;
 	    uint32_t lookahead_count = 0;
+	    //nt32_t lookahead_num_4 = LOOKAHEAD_UNITS;
+	    uint32_t lookahead_count_4 = 0;
+	    uint32_t lookahead_head_4 = 0;
+	    uint32_t lookahead_head_mod = 0;
 	    uint32_t consumed_bytes = 0;
+	    uint32_t consumed_bytes_4 = 0;
 	    uint32_t out_bytes = 1;
 	    uint32_t cur_header_byte_pos = 0;
 	    uint8_t header_byte = 0;
@@ -97,13 +113,23 @@ namespace lzss {
 	    uint32_t c = 0;
 
 	    uint32_t used_bytes = 0;
+	    const uint32_t* const in_4 = (const uint32_t*) in;
 
 	    while (used_bytes < my_chunk_size) {
 		
 		//fill up lookahead buffer
-		while ((lookahead_count < LOOKAHEAD_SIZE) && (consumed_bytes < my_chunk_size))  {
-		    lookahead[(lookahead_head + (lookahead_count++)) % LOOKAHEAD_SIZE] =
-			in[in_start_idx + (consumed_bytes++)];
+		while ((lookahead_count_4 < LOOKAHEAD_UNITS) && (consumed_bytes < my_chunk_size))  {
+		    
+		    lookahead_4[(lookahead_head_4 + (lookahead_count_4++)) % LOOKAHEAD_UNITS] =
+			in_4[in_start_idx + (consumed_bytes_4++)];
+		    consumed_bytes+=READ_UNITS;
+		    lookahead_count+=READ_UNITS;
+
+		    if (consumed_bytes > my_chunk_size) {
+			uint32_t diff = consumed_bytes - my_chunk_size;
+			consumed_bytes -= diff;
+			lookahead_count -= diff;
+		    }
 		}
 		//printf("Consumed: %llu\tChunk Size: %llu\n", (unsigned long long) consumed_bytes, (unsigned long long) my_chunk_size);
 		uint32_t offset = 0;
@@ -125,6 +151,13 @@ namespace lzss {
 		    }
 		    header_byte = (header_byte | 1);
 		    used_bytes++;
+		    lookahead_head_mod++;
+		    if (lookahead_head_mod == READ_UNITS) {
+			lookahead_head_mod = 0;
+			lookahead_head_4 = (lookahead_head_4 + 1) % LOOKAHEAD_UNITS;
+			lookahead_count_4--;
+			
+		    }
 		    
 		}
 		//match
@@ -153,6 +186,15 @@ namespace lzss {
 		    
 		    //header_byte = (header_byte << 1);
 		    used_bytes += length;
+
+		    lookahead_head_mod+=length;
+		    if (lookahead_head_mod >= READ_UNITS) {
+			uint32_t k = lookahead_head_mod / READ_UNITS;
+			lookahead_head_mod = lookahead_head_mod % READ_UNITS;
+			lookahead_head_4 = (lookahead_head_4 + k) % LOOKAHEAD_UNITS;
+			lookahead_count_4-=k;
+			
+		    }
 		    
 		}
 		if ((++blocks) == 8) {
@@ -212,32 +254,37 @@ namespace lzss {
 	uint8_t* d_in;
 	uint8_t* d_out;
 	uint8_t* temp;
-	
-	uint32_t chunk_size = in_n_bytes/NUM_CHUNKS;
+
+	uint64_t padded_in_n_bytes = in_n_bytes + (CHUNK_SIZE-(in_n_bytes % CHUNK_SIZE));
+	uint32_t n_chunks = padded_in_n_bytes/CHUNK_SIZE;
+	uint32_t chunk_size = padded_in_n_bytes/n_chunks;
+	assert((chunk_size % READ_UNITS)==0);
 	uint64_t exp_out_chunk_size = (chunk_size+OVERHEAD_PER_CHUNK_(chunk_size));
-	uint64_t exp_data_out_bytes = (NUM_CHUNKS*exp_out_chunk_size);
-	uint64_t len_bytes =  (NUM_CHUNKS*sizeof(uint64_t));
+	uint64_t exp_data_out_bytes = (n_chunks*exp_out_chunk_size);
+	uint64_t len_bytes =  (n_chunks*sizeof(uint64_t));
 	uint64_t head_bytes = HEAD_INTS*sizeof(uint32_t);
 	uint64_t out_bytes = head_bytes +  //header
 	    len_bytes +  //lens
 	    exp_data_out_bytes; //data
 
 
-	cuda_err_chk(cudaMalloc(&d_in, in_n_bytes));
+	cuda_err_chk(cudaMalloc(&d_in, padded_in_n_bytes));
 	cuda_err_chk(cudaMalloc(&d_out, len_bytes + exp_data_out_bytes));
 	uint64_t* d_lens_out = (uint64_t*) d_out;
 	uint8_t* d_data_out = d_out + len_bytes;
 	printf("expected_out_bytes: %llu\toverhead_per_chunk: %llu\tchunk_size: %llu\n", exp_data_out_bytes, OVERHEAD_PER_CHUNK_(chunk_size), chunk_size);
 	//return;
 	cuda_err_chk(cudaMemcpy(d_in, in, in_n_bytes, cudaMemcpyHostToDevice));
-        kernel_compress<<<GRID_SIZE, BLK_SIZE>>>(d_in, d_data_out, in_n_bytes, exp_data_out_bytes, chunk_size, exp_out_chunk_size, NUM_CHUNKS, d_lens_out);
+	uint64_t grid_size = ceil<uint64_t>(n_chunks, BLK_SIZE);
+        kernel_compress<<<grid_size, BLK_SIZE>>>(d_in, d_data_out, in_n_bytes, exp_data_out_bytes, chunk_size, exp_out_chunk_size, n_chunks, d_lens_out);
 	cuda_err_chk(cudaDeviceSynchronize());
 	printf("Compress Kernel Done\n");
-	thrust::inclusive_scan(thrust::device, d_lens_out, d_lens_out + NUM_CHUNKS, d_lens_out);
+	thrust::inclusive_scan(thrust::device, d_lens_out, d_lens_out + n_chunks, d_lens_out);
 	cuda_err_chk(cudaDeviceSynchronize());
 	cuda_err_chk(cudaFree(d_in));
 	cuda_err_chk(cudaMalloc(&temp, exp_data_out_bytes));
-	kernel_shift_data<<<GRID_SIZE, BLK_SIZE>>>(d_data_out, temp, d_lens_out, exp_out_chunk_size, NUM_CHUNKS);
+
+	kernel_shift_data<<<grid_size, BLK_SIZE>>>(d_data_out, temp, d_lens_out, exp_out_chunk_size, n_chunks);
 	cuda_err_chk(cudaDeviceSynchronize());
 
 	printf("in bytes: %llu\n", in_n_bytes);
@@ -246,17 +293,17 @@ namespace lzss {
 	uint32_t* out_32 = (uint32_t*) *out;
 	out_32[0] = HEAD_INTS ;
 	out_32[1] = chunk_size;
-	out_32[2] = NUM_CHUNKS;
+	out_32[2] = n_chunks;
 	out_32[3] = HIST_SIZE;
 	out_32[4] = MIN_MATCH_LENGTH;
 	out_32[5] = MAX_MATCH_LENGTH;
-	printf("HEAD_INTS: %llu\tchunk_size: %llu\tNUM_CHUNKS: %llu\tHIST_SIZE: %llu\tMIN_MATCH_LENGTH: %llu\tMAX_MATCH_LENGTH: %llu\tOFFSET_SIZE: %llu\tbitsNeeded(4096): %llu\n",
+	printf("HEAD_INTS: %llu\tchunk_size: %llu\tn_chunks: %llu\tHIST_SIZE: %llu\tMIN_MATCH_LENGTH: %llu\tMAX_MATCH_LENGTH: %llu\tOFFSET_SIZE: %llu\tbitsNeeded(4096): %llu\n",
 	       out_32[0], out_32[1], out_32[2], out_32[3], out_32[4], out_32[5], OFFSET_SIZE, bitsNeeded(HIST_SIZE));
 
 	cuda_err_chk(cudaMemcpy((*out) +  head_bytes, d_lens_out, len_bytes, cudaMemcpyDeviceToHost));
 
 
-	uint64_t out_data_bytes = ((uint64_t*)((*out) + head_bytes))[NUM_CHUNKS-1];
+	uint64_t out_data_bytes = ((uint64_t*)((*out) + head_bytes))[n_chunks-1];
 	printf("out_data_bytes: %llu\n", out_data_bytes);
 	
 	cuda_err_chk(cudaMemcpy((*out) +  head_bytes + len_bytes, temp, out_data_bytes, cudaMemcpyDeviceToHost));
