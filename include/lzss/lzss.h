@@ -19,7 +19,7 @@ constexpr   uint32_t MIN_MATCH_LENGTH_() { return (ceil<uint32_t>((OFFSET_SIZE_(
 constexpr   uint32_t MAX_MATCH_LENGTH_() { return (pow<uint32_t, uint32_t>(2,LENGTH_SIZE_()) + MIN_MATCH_LENGTH_()); }
 constexpr   uint8_t DEFAULT_CHAR_() { return ' '; }
 constexpr   uint32_t HEAD_INTS_() { return 6; }
-constexpr   uint32_t READ_UNITS_() { return 4; }
+constexpr   uint32_t READ_UNITS_() { return 1; }
 
 constexpr   uint32_t LOOKAHEAD_UNITS_() { return LOOKAHEAD_SIZE_()/READ_UNITS_(); }
 
@@ -83,6 +83,108 @@ namespace lzss {
 	*offset = max_offset;
 
     }
+
+    __host__ __device__ void compress_func_old(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t in_chunk_size, const uint64_t out_chunk_size, const uint64_t n_chunks, uint64_t* lens, const uint64_t tid) {
+	if (tid < n_chunks) {
+	    uint64_t rem = in_n_bytes % in_chunk_size;
+	    uint64_t my_chunk_size = ((tid == (n_chunks - 1)) && (rem)) ? rem : in_chunk_size;
+	    uint64_t in_start_idx = tid * in_chunk_size;
+	    uint64_t out_start_idx = tid * out_chunk_size;
+
+	    uint8_t hist[HIST_SIZE] = {DEFAULT_CHAR};
+	    uint8_t lookahead[LOOKAHEAD_SIZE];
+	    uint32_t hist_head  = 0;
+	    uint32_t hist_count = 0;
+	    uint32_t lookahead_head = 0;
+	    uint32_t lookahead_count = 0;
+	    uint32_t consumed_bytes = 0;
+	    uint32_t out_bytes = 1;
+	    uint32_t cur_header_byte_pos = 0;
+	    uint8_t header_byte = 0;
+	    uint8_t blocks = 0;
+	    uint32_t c = 0;
+
+	    uint32_t used_bytes = 0;
+
+	    while (used_bytes < my_chunk_size) {
+		
+		//fill up lookahead buffer
+		while ((lookahead_count < LOOKAHEAD_SIZE) && (consumed_bytes < my_chunk_size))  {
+		    lookahead[(lookahead_head + (lookahead_count++)) % LOOKAHEAD_SIZE] =
+			in[in_start_idx + (consumed_bytes++)];
+		}
+		//printf("Consumed: %llu\tChunk Size: %llu\n", (unsigned long long) consumed_bytes, (unsigned long long) my_chunk_size);
+		uint32_t offset = 0;
+		uint32_t length = 0;
+		find_match(hist, hist_head, hist_count, lookahead, lookahead_head, lookahead_count, &offset, &length);
+		//if (tid == 0 && c < 5)
+		//	printf("HERE1: %c\t %llu\n", (char) lookahead[lookahead_head], (unsigned long long) c);
+		//no match
+		if (length == 0) {
+		    uint8_t v = lookahead[lookahead_head];
+		    out[out_start_idx + (out_bytes++)] = v;
+		    lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
+		    lookahead_count--;
+		    hist[(hist_head+hist_count)%HIST_SIZE] = v;
+		    hist_count += 1;
+		    if (hist_count > HIST_SIZE) {
+			hist_head = (hist_head + (HIST_SIZE-hist_count)) % HIST_SIZE;
+			hist_count = HIST_SIZE;
+		    }
+		    header_byte = (header_byte | 1);
+		    used_bytes++;
+		    
+		}
+		//match
+		else {
+		    uint64_t v = (offset << LENGTH_SIZE) | (length - MIN_MATCH_LENGTH);
+
+		    for (size_t i = 0; i < (MIN_MATCH_LENGTH-1); i++) {
+			out[out_start_idx + (out_bytes++)] = v & 0x00FF;
+			v >>= 8;
+		    }
+		    uint32_t hist_start = hist_head+hist_count;
+		    for (size_t i = 0; i < length; i++) {
+			hist[(hist_start+i) % HIST_SIZE] = lookahead[(lookahead_head+i) % HIST_SIZE];
+		    }
+		    
+		    lookahead_head = (lookahead_head + length) % LOOKAHEAD_SIZE;
+		    lookahead_count -= length;
+		    hist_count += length;
+		    if (hist_count > HIST_SIZE) {
+			hist_head = (hist_head + (HIST_SIZE-hist_count)) % HIST_SIZE;
+			hist_count = HIST_SIZE;
+		    }
+		    
+		    //int offset_start = mod(hist_count - offset, HIST_SIZE);
+
+		    
+		    //header_byte = (header_byte << 1);
+		    used_bytes += length;
+		    
+		}
+		if ((++blocks) == 8) {
+		    out[out_start_idx + cur_header_byte_pos] = header_byte;
+		    header_byte = 0;
+		    blocks = 0;
+		    cur_header_byte_pos = out_bytes++;
+		}
+		else
+		    header_byte <<= 1;
+		c++;
+	    }
+	    if (blocks != 0) {
+		out[out_start_idx + cur_header_byte_pos] = header_byte;
+
+	    }
+	    lens[tid] = out_bytes;
+	    //if (out_bytes > my_chunk_size)
+	    //printf("comrpessed larger than uncompressed\tout_bytes: %llu\tmy_chunk_size: %llu\n", (unsigned long long) out_bytes, (unsigned long long) my_chunk_size);
+	    //printf("%llu done\n", (unsigned long long) tid);
+
+	}
+	
+    }
     
     __host__ __device__ void compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t in_chunk_size, const uint64_t out_chunk_size, const uint64_t n_chunks, uint64_t* lens, const uint64_t tid) {
 	if (tid < n_chunks) {
@@ -95,7 +197,7 @@ namespace lzss {
 	    
 	    
 	    uint8_t lookahead[LOOKAHEAD_SIZE];
-	    uint32_t* lookahead_4 = (uint32_t*) lookahead;
+	    uint8_t* lookahead_4 = (uint8_t*) lookahead;
 	    uint32_t hist_head  = 0;
 	    uint32_t hist_count = 0;
 	    uint32_t lookahead_head = 0;
@@ -113,7 +215,7 @@ namespace lzss {
 	    uint32_t c = 0;
 
 	    uint32_t used_bytes = 0;
-	    const uint32_t* const in_4 = (const uint32_t*) in;
+	    const uint8_t* const in_4 = (const uint8_t*) in;
 
 	    while (used_bytes < my_chunk_size) {
 		
@@ -129,6 +231,7 @@ namespace lzss {
 			uint32_t diff = consumed_bytes - my_chunk_size;
 			consumed_bytes -= diff;
 			lookahead_count -= diff;
+			break;
 		    }
 		}
 		//printf("Consumed: %llu\tChunk Size: %llu\n", (unsigned long long) consumed_bytes, (unsigned long long) my_chunk_size);
