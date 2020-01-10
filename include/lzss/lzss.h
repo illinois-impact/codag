@@ -8,7 +8,7 @@ constexpr   uint16_t BLK_SIZE_() { return (1024); }
 constexpr   uint16_t BLKS_SM_()  { return (THRDS_SM_()/BLK_SIZE_()); }
 constexpr   uint64_t GRID_SIZE_() { return (1024); }
 constexpr   uint64_t NUM_CHUNKS_() { return (GRID_SIZE_()*BLK_SIZE_()); }
-constexpr   uint64_t CHUNK_SIZE_() { return (1*1024); }
+constexpr   uint64_t CHUNK_SIZE_() { return (256*1024); }
 constexpr   uint64_t HEADER_SIZE_() { return (1); }
 constexpr   uint32_t OVERHEAD_PER_CHUNK_(uint32_t d) { return (ceil<uint32_t>(d,(HEADER_SIZE_()*8))+1); } 
 constexpr   uint32_t HIST_SIZE_() { return 4096; }
@@ -17,7 +17,7 @@ constexpr   uint32_t OFFSET_SIZE_() { return (bitsNeeded((uint32_t)HIST_SIZE_())
 constexpr   uint32_t LENGTH_SIZE_() { return (4); }
 constexpr   uint32_t LENGTH_MASK_(uint32_t d) { return ((d > 0) ? 1 | (LENGTH_MASK_(d-1)) << 1 : 0);  }
 constexpr   uint32_t MIN_MATCH_LENGTH_() { return (ceil<uint32_t>((OFFSET_SIZE_()+LENGTH_SIZE_()),8)+1); }
-constexpr   uint32_t MAX_MATCH_LENGTH_() { return (pow<uint32_t, uint32_t>(2,LENGTH_SIZE_()) + MIN_MATCH_LENGTH_()); }
+constexpr   uint32_t MAX_MATCH_LENGTH_() { return (pow<uint32_t, uint32_t>(2,LENGTH_SIZE_()) + MIN_MATCH_LENGTH_() - 1); }
 constexpr   uint8_t DEFAULT_CHAR_() { return ' '; }
 constexpr   uint32_t HEAD_INTS_() { return 7; }
 constexpr   uint32_t READ_UNITS_() { return 1; }
@@ -117,8 +117,8 @@ namespace lzss {
 		}
 		uint8_t header = lookahead[(lookahead_head) % LOOKAHEAD_SIZE];
 		lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
-		if ((tid == 0) && (used_bytes < 10))
-		    printf("1: %p\n", header);
+		//if ((tid == 0) && (used_bytes < 10))
+		//printf("1: %p\n", header);
 		lookahead_count--;
 		used_bytes++;
 		for (size_t i = 0; (i < 8) && (used_bytes < my_chunk_size); i++, header>>=1) {
@@ -128,24 +128,26 @@ namespace lzss {
 
 			uint64_t v = 0;
 			for (size_t j = 0; j < n_b; j++) {
-			    v |= lookahead[(lookahead_head)] << (j*8);
+			    uint64_t k = ((uint64_t)lookahead[(lookahead_head)]) << (j*8);
+			    //printf("k: %llu\n", (unsigned long long) (k >>(j*8)));
+			    v |= k;
 			    lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
 			    lookahead_count--;
 			}
-			uint32_t len = (v & LENGTH_MASK(LENGTH_SIZE)) + MIN_MATCH_LENGTH;
+			uint32_t length = (v & LENGTH_MASK(LENGTH_SIZE)) + MIN_MATCH_LENGTH;
 			uint32_t offset = v >> LENGTH_SIZE;
 			uint32_t hist_copy_start = hist_head + offset;
 			uint32_t hist_off = hist_head + hist_count;
-			for (size_t j = 0; (j < len) ; j++) {
-			    uint8_t v = hist[(hist_copy_start+j) % HIST_SIZE];
-			    out[out_start_idx + out_bytes++] = v;
-			    hist[(hist_off + j) % HIST_SIZE] = v;
-			    if ((tid == 0) && (used_bytes < 10))
-				printf("1: %c\n", (char)v);
+			for (size_t j = 0; (j < length) ; j++) {
+			    uint8_t z = hist[(hist_copy_start+j) % HIST_SIZE];
+			    out[out_start_idx + out_bytes++] = z;
+			    hist[(hist_off + j) % HIST_SIZE] = z;
+			    //if ((tid == 0) && (used_bytes < 100))
+			    //printf("b: %llu\t1: %c\t ub: %llu\tleng: %llu\toffset: %llu\tj: %llu\tv: %p\n", (unsigned long long) out_bytes, (char)z, (unsigned long long) used_bytes, (unsigned long long) length, (unsigned long long) offset, (unsigned long long) j,v);
 			}
-			hist_count += len;
+			hist_count += length;
 			if (hist_count > HIST_SIZE) {
-			    hist_head = (hist_head + (HIST_SIZE-hist_count)) % HIST_SIZE;
+			    hist_head = (hist_head + (hist_count-HIST_SIZE)) % HIST_SIZE;
 			    hist_count = HIST_SIZE;
 			}
 			used_bytes += n_b;
@@ -153,8 +155,8 @@ namespace lzss {
 		    }
 		    else {
 			uint8_t v = lookahead[(lookahead_head)];
-			if ((tid == 0) && (used_bytes < 10))
-			    printf("2: %c\n", (char)v);
+			//if ((tid == 0) && (used_bytes < 100))
+			//printf("b: %llu\t1: %c\t ub: %llu\n", (unsigned long long) out_bytes, (char)v, (unsigned long long) used_bytes);
 			out[out_start_idx + out_bytes++] = v;
 			lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
 			lookahead_count--;
@@ -221,8 +223,8 @@ namespace lzss {
 		    }
 		    header_byte = (header_byte | (1 << blocks));
 
-		    if ((tid == 0) && (used_bytes < 10))
-			printf("1: %c\n", (char) v);
+		    //if ((tid == 0) && (out_bytes < 100))
+		    //    printf("b: %llu\t1: %c\t ub: %llu\n", (unsigned long long) out_bytes, (char)v, (unsigned long long) used_bytes);
 		    used_bytes++;
 		    
 		    
@@ -230,24 +232,26 @@ namespace lzss {
 		//match
 		else {
 		    uint64_t v = (offset << LENGTH_SIZE) | (length - MIN_MATCH_LENGTH);
-
+		    uint64_t v2 = v;
 		    for (size_t i = 0; i < (MIN_MATCH_LENGTH-1); i++) {
-			out[out_start_idx + (out_bytes++)] = v & 0x00FF;
+			uint8_t k = v & 0x00FF;
+			out[out_start_idx + (out_bytes++)] = k;
+			//printf("k: %llu\n", (unsigned long long) k);
 			v >>= 8;
 		    }
 		    uint32_t hist_start = hist_head+hist_count;
 		    for (size_t i = 0; i < length; i++) {
-			uint8_t v = lookahead[(lookahead_head+i) % HIST_SIZE];
-			hist[(hist_start+i) % HIST_SIZE]= v;
-			if ((tid == 0) && (used_bytes < 10))
-			    printf("2: %c\n", (char) v);
+			uint8_t z = lookahead[(lookahead_head+i) % HIST_SIZE];
+			hist[(hist_start+i) % HIST_SIZE]= z;
+			//if ((tid == 0) && (out_bytes < 100))
+			//	printf("b: %llu\t1: %c\t ub: %llu\tleng: %llu\toffset: %llu\tj: %llu\tv: %p\n", (unsigned long long) out_bytes, (char)z, (unsigned long long) used_bytes, (unsigned long long) length, (unsigned long long) offset, (unsigned long long) i,v2);
 		    }
 		    
 		    lookahead_head = (lookahead_head + length) % LOOKAHEAD_SIZE;
 		    lookahead_count -= length;
 		    hist_count += length;
 		    if (hist_count > HIST_SIZE) {
-			hist_head = (hist_head + (HIST_SIZE-hist_count)) % HIST_SIZE;
+			hist_head = (hist_head + (hist_count-HIST_SIZE)) % HIST_SIZE;
 			hist_count = HIST_SIZE;
 		    }
 		    
@@ -375,7 +379,7 @@ namespace lzss {
 		    lookahead_count -= length;
 		    hist_count += length;
 		    if (hist_count > HIST_SIZE) {
-			hist_head = (hist_head + (HIST_SIZE-hist_count)) % HIST_SIZE;
+			hist_head = (hist_head + (hist_count-HIST_SIZE)) % HIST_SIZE;
 			hist_count = HIST_SIZE;
 		    }
 		    
@@ -460,7 +464,7 @@ namespace lzss {
 	uint8_t* d_out;
 	uint8_t* temp;
 
-	uint64_t padded_in_n_bytes = in_n_bytes + (CHUNK_SIZE-(in_n_bytes % CHUNK_SIZE));
+	uint64_t padded_in_n_bytes = in_n_bytes;// + (CHUNK_SIZE-(in_n_bytes % CHUNK_SIZE));
 	uint32_t n_chunks = padded_in_n_bytes/CHUNK_SIZE;
 	uint32_t chunk_size = padded_in_n_bytes/n_chunks;
 	assert((chunk_size % READ_UNITS)==0);
