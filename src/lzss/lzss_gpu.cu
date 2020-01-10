@@ -25,7 +25,7 @@ int main(int argc, char** argv) {
     const char* input = decomp ? argv[2] : argv[1];
     const char* output = decomp ? argv[3] : argv[2];
 
-    if (!decomp) {
+    
 	std::chrono::high_resolution_clock::time_point total_start = std::chrono::high_resolution_clock::now();
 	int in_fd;
 	struct stat in_sb;
@@ -57,7 +57,12 @@ int main(int argc, char** argv) {
 	uint8_t* out_;
 	uint64_t out_size;
 	std::chrono::high_resolution_clock::time_point compress_start = std::chrono::high_resolution_clock::now();
-	lzss::compress_gpu(in_, &out_, in_sb.st_size, &out_size);
+	if (!decomp) {
+	    lzss::compress_gpu(in_, &out_, in_sb.st_size, &out_size);
+	}
+	else {
+	    lzss::decompress_gpu(in_, &out_, in_sb.st_size, &out_size);
+	}
 	std::chrono::high_resolution_clock::time_point compress_end = std::chrono::high_resolution_clock::now();
 
 	fstat(out_fd, &out_sb);
@@ -78,7 +83,7 @@ int main(int argc, char** argv) {
 	std::chrono::duration<double> comp = std::chrono::duration_cast<std::chrono::duration<double>>(compress_end - compress_start);
 	std::chrono::duration<double> wrt = std::chrono::duration_cast<std::chrono::duration<double>>(total_end - compress_end);
 	std::cout << "Total time: " << total.count() << " secs\n";
-	std::cout << "Compress time: " << comp.count() << " secs\n";
+	std::cout << "Compute time: " << comp.count() << " secs\n";
 	std::cout << "Write time: " << wrt.count() << " secs\n";
-    }
+    
 }
