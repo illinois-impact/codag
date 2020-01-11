@@ -60,7 +60,6 @@
 #include <unistd.h>
 #include <iostream>
 #include <cstring>
-#include <unistd.h>
 #include <sys/types.h> 
 
 #include <sys/stat.h> 
@@ -130,10 +129,7 @@ int main(int argc, char** argv) {
 	}
 	out = mmap(nullptr, out_size, PROT_WRITE | PROT_READ, MAP_SHARED, out_fd, 0);
 
-    printf("input size:%ld output bytes:%ld\n", in_sb.st_size, out_size);
-
     memcpy(out, out_, out_size);
-    
 
 	if(munmap(in, in_sb.st_size) == -1) PRINT_ERROR;
 	if(munmap(out, out_size) == -1) PRINT_ERROR;

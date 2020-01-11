@@ -135,6 +135,18 @@ namespace brle {
         return pos;
     }
 
+    __host__ __device__ void shift_data(const uint8_t* in, uint8_t* out, const uint64_t* ptr, const uint64_t tid) {
+        const uint8_t* cur_in = in + tid * OUTPUT_CHUNK_SIZE;
+        uint8_t* cur_out = out + ptr[tid];
+        memcpy(cur_out, cur_in, sizeof(uint8_t) * ptr[tid + 1] - ptr[tid]);
+    }
+
+    __global__ void kernel_shift_data(const uint8_t* in, uint8_t* out, const uint64_t* ptr, const uint64_t n_chunks) {
+        uint64_t tid = blockDim.x * blockIdx.x + threadIdx.x;
+        if (tid < n_chunks)
+            shift_data(in, out, ptr, tid);
+    }
+
     __global__ void kernel_compress(uint8_t* in, uint8_t* out, uint64_t *offset, const uint64_t in_n_bytes, const uint32_t n_chunks) {
         uint64_t tid = blockDim.x * blockIdx.x + threadIdx.x;
         if (tid < n_chunks) 
@@ -143,27 +155,46 @@ namespace brle {
 
     __host__ void compress_gpu(const uint8_t* in, uint8_t** out, const uint64_t in_n_bytes, uint64_t *out_n_bytes) {
         uint32_t n_chunks = (in_n_bytes - 1) / CHUNK_SIZE + 1;
-	    uint64_t exp_out_n_bytes = (n_chunks * OUTPUT_CHUNK_SIZE);
 
-        uint8_t* d_in, *d_out;
+        uint8_t* d_in, *d_out, *d_shift;
         cuda_err_chk(cudaMalloc((void**)&d_in, in_n_bytes));
-        cuda_err_chk(cudaMalloc((void**)&d_out, exp_out_n_bytes));
+        cuda_err_chk(cudaMalloc((void**)&d_out, n_chunks * OUTPUT_CHUNK_SIZE));
 
         cudaMemcpy(d_in, in, in_n_bytes, cudaMemcpyHostToDevice);
 
-        uint64_t *ptr;
-        cuda_err_chk(cudaMalloc((void**)&ptr, sizeof(uint64_t) * (n_chunks + 1)));
+        uint64_t *d_ptr;
+        cuda_err_chk(cudaMalloc((void**)&d_ptr, sizeof(uint64_t) * (n_chunks + 1)));
 
 
         uint64_t grid_size = ceil<uint64_t>(n_chunks, BLK_SIZE);
-        printf("grid size:%ld\n", grid_size);
         
-        kernel_compress<<<grid_size, BLK_SIZE>>>(d_in, d_out, ptr, in_n_bytes, n_chunks);
+        kernel_compress<<<grid_size, BLK_SIZE>>>(d_in, d_out, d_ptr, in_n_bytes, n_chunks);
+        thrust::inclusive_scan(thrust::device, d_ptr, d_ptr + n_chunks + 1, d_ptr);
+
+        uint64_t data_n_bytes;
+        cudaMemcpy(&data_n_bytes, d_ptr + n_chunks, sizeof(uint64_t), cudaMemcpyDeviceToHost);
+
+        cuda_err_chk(cudaMalloc((void**)&d_shift, data_n_bytes * sizeof(uint8_t)));
+        kernel_shift_data<<<grid_size, BLK_SIZE>>>(d_out, d_shift, d_ptr, n_chunks);
+
+        cuda_err_chk(cudaFree(d_in));
+        cuda_err_chk(cudaFree(d_out));
     	cuda_err_chk(cudaDeviceSynchronize());
 
-        *out_n_bytes = BLK_SIZE * OUTPUT_CHUNK_SIZE;
+        uint64_t len_n_bytes = sizeof(uint32_t); // length of chunk
+        uint64_t ptr_n_bytes = sizeof(uint64_t) * (n_chunks + 1); // device pointer 
+	    uint64_t exp_out_n_bytes = len_n_bytes + ptr_n_bytes + data_n_bytes;
 
-        *out = new uint8_t[*out_n_bytes];
-        cudaMemcpy(*out, d_out, *out_n_bytes, cudaMemcpyDeviceToHost);
+
+
+        *out = new uint8_t[exp_out_n_bytes];
+        uint32_t* out_len = (uint32_t*)*out;
+        uint64_t* out_ptr = (uint64_t*)(*out + 8);
+        *out_len = n_chunks;
+        cuda_err_chk(cudaMemcpy(out_ptr, d_ptr, ptr_n_bytes, cudaMemcpyDeviceToHost));
+        cuda_err_chk(cudaMemcpy((*out) + len_n_bytes + ptr_n_bytes, d_shift, data_n_bytes, cudaMemcpyDeviceToHost));
+        cuda_err_chk(cudaFree(d_shift));
+
+        *out_n_bytes = exp_out_n_bytes;
     }
 }
