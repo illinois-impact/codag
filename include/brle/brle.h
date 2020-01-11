@@ -1,19 +1,24 @@
-#include <stdint.h>
+#include <common.h>
+#include <thrust/scan.h>
+#include <thrust/execution_policy.h>
+
 // #define uint8_t char
 
 constexpr   uint32_t LOOKAHEAD_SIZE_() { return 4096; }
-constexpr   uint64_t CHUNK_SIZE_() { return 128; }
+constexpr   uint64_t CHUNK_SIZE_() { return 256*1024; }
 constexpr   uint64_t INPUT_SIZE_() { return 2048; }
+constexpr   uint16_t BLK_SIZE_() { return (1024); }
 
 #define LOOKAHEAD_SIZE			  LOOKAHEAD_SIZE_()			  
 #define CHUNK_SIZE                CHUNK_SIZE_()
 #define INPUT_SIZE                INPUT_SIZE_()
+#define BLK_SIZE			      BLK_SIZE_()			  
 
 #define MAX_LITERAL_SIZE 128
 #define MINIMUM_REPEAT 3
 #define MAXIMUM_REPEAT (127 + MINIMUM_REPEAT)
 
-#define OUTPUT_CHUNK_SIZE (CHUNK_SIZE + (MAX_LITERAL_SIZE - 1) / CHUNK_SIZE + 1) //maximum output chunk size
+#define OUTPUT_CHUNK_SIZE (CHUNK_SIZE + (CHUNK_SIZE - 1) / MAX_LITERAL_SIZE + 1) //maximum output chunk size
 
 namespace brle {
     __host__ __device__ void decode(const uint8_t *in, uint8_t* out, const uint64_t *ptr, const uint64_t tid) {
@@ -130,8 +135,35 @@ namespace brle {
         return pos;
     }
 
-    __global__ void kernel_compress(uint8_t* in, uint8_t* out, uint64_t *offset, const uint64_t in_n_bytes) {
-        int tid = blockDim.x * blockIdx.x + threadIdx.x;
-        offset[tid + 1] = encode(in + tid * CHUNK_SIZE, out + tid * OUTPUT_CHUNK_SIZE, in_n_bytes, tid);
+    __global__ void kernel_compress(uint8_t* in, uint8_t* out, uint64_t *offset, const uint64_t in_n_bytes, const uint32_t n_chunks) {
+        uint64_t tid = blockDim.x * blockIdx.x + threadIdx.x;
+        if (tid < n_chunks) 
+            offset[tid + 1] = encode(in + tid * CHUNK_SIZE, out + tid * OUTPUT_CHUNK_SIZE, in_n_bytes, tid);
+    }
+
+    __host__ void compress_gpu(const uint8_t* in, uint8_t** out, const uint64_t in_n_bytes, uint64_t *out_n_bytes) {
+        uint32_t n_chunks = (in_n_bytes - 1) / CHUNK_SIZE + 1;
+	    uint64_t exp_out_n_bytes = (n_chunks * OUTPUT_CHUNK_SIZE);
+
+        uint8_t* d_in, *d_out;
+        cuda_err_chk(cudaMalloc((void**)&d_in, in_n_bytes));
+        cuda_err_chk(cudaMalloc((void**)&d_out, exp_out_n_bytes));
+
+        cudaMemcpy(d_in, in, in_n_bytes, cudaMemcpyHostToDevice);
+
+        uint64_t *ptr;
+        cuda_err_chk(cudaMalloc((void**)&ptr, sizeof(uint64_t) * (n_chunks + 1)));
+
+
+        uint64_t grid_size = ceil<uint64_t>(n_chunks, BLK_SIZE);
+        printf("grid size:%ld\n", grid_size);
+        
+        kernel_compress<<<grid_size, BLK_SIZE>>>(d_in, d_out, ptr, in_n_bytes, n_chunks);
+    	cuda_err_chk(cudaDeviceSynchronize());
+
+        *out_n_bytes = BLK_SIZE * OUTPUT_CHUNK_SIZE;
+
+        *out = new uint8_t[*out_n_bytes];
+        cudaMemcpy(*out, d_out, *out_n_bytes, cudaMemcpyDeviceToHost);
     }
 }
