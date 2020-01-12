@@ -118,7 +118,7 @@ int main(int argc, char** argv) {
 	    brle::compress_gpu(in_, &out_, in_sb.st_size, &out_size);
 	}
 	else {
-	    // brle::decompress_gpu(in_, &out_, in_sb.st_size, &out_size);
+	    brle::decompress_gpu(in_, &out_, in_sb.st_size, &out_size);
     }
 
 	std::chrono::high_resolution_clock::time_point compress_end = std::chrono::high_resolution_clock::now();

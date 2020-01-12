@@ -23,12 +23,13 @@ constexpr   uint16_t BLK_SIZE_() { return (1024); }
 namespace brle {
     __host__ __device__ void decode(const uint8_t *in, uint8_t* out, const uint64_t *ptr, const uint64_t tid) {
         out += tid * CHUNK_SIZE;
-        in += tid * OUTPUT_CHUNK_SIZE;
+        in += ptr[tid];
         
         uint64_t input_len = ptr[tid + 1] - ptr[tid];
         uint64_t input_pos = 0;
 
         while (input_pos < input_len) {
+            // printf("pos:%ld len:%ld\n", input_pos, input_len);
             uint64_t count;
             uint8_t ch = in[input_pos ++];
             if (ch > 127) {
@@ -43,9 +44,11 @@ namespace brle {
         }
     }
 
-    __global__ void kernel_decompress(const uint8_t* compressed, const uint64_t *pos, uint8_t* uncompressed) {
+    __global__ void kernel_decompress(const uint8_t* compressed, const uint64_t *pos, uint8_t* uncompressed, const uint32_t n_chunks) {
         uint64_t tid = blockDim.x * blockIdx.x + threadIdx.x;
-        decode(compressed, uncompressed, pos, tid);
+        if (tid < n_chunks) {
+            decode(compressed, uncompressed, pos, tid);
+        }
         // ByteRleDecoder decoder(compressed + t * OUTPUT_CHUNK_SIZE, pos[t + 1] - pos[t]);
         // decoder.decode(uncompressed + t * CHUNK_SIZE);
     }
@@ -149,13 +152,14 @@ namespace brle {
 
     __global__ void kernel_compress(uint8_t* in, uint8_t* out, uint64_t *offset, const uint64_t in_n_bytes, const uint32_t n_chunks) {
         uint64_t tid = blockDim.x * blockIdx.x + threadIdx.x;
-        if (tid < n_chunks) 
+        if (tid < n_chunks) {
             offset[tid + 1] = encode(in + tid * CHUNK_SIZE, out + tid * OUTPUT_CHUNK_SIZE, in_n_bytes, tid);
+        }
     }
 
     __host__ void compress_gpu(const uint8_t* in, uint8_t** out, const uint64_t in_n_bytes, uint64_t *out_n_bytes) {
         uint32_t n_chunks = (in_n_bytes - 1) / CHUNK_SIZE + 1;
-
+        
         uint8_t* d_in, *d_out, *d_shift;
         cuda_err_chk(cudaMalloc((void**)&d_in, in_n_bytes));
         cuda_err_chk(cudaMalloc((void**)&d_out, n_chunks * OUTPUT_CHUNK_SIZE));
@@ -173,7 +177,7 @@ namespace brle {
 
         uint64_t data_n_bytes;
         cudaMemcpy(&data_n_bytes, d_ptr + n_chunks, sizeof(uint64_t), cudaMemcpyDeviceToHost);
-
+        printf("datalen:%ld\n", data_n_bytes);
         cuda_err_chk(cudaMalloc((void**)&d_shift, data_n_bytes * sizeof(uint8_t)));
         kernel_shift_data<<<grid_size, BLK_SIZE>>>(d_out, d_shift, d_ptr, n_chunks);
 
@@ -181,20 +185,51 @@ namespace brle {
         cuda_err_chk(cudaFree(d_out));
     	cuda_err_chk(cudaDeviceSynchronize());
 
-        uint64_t len_n_bytes = sizeof(uint32_t); // length of chunk
-        uint64_t ptr_n_bytes = sizeof(uint64_t) * (n_chunks + 1); // device pointer 
-	    uint64_t exp_out_n_bytes = len_n_bytes + ptr_n_bytes + data_n_bytes;
-
-
+        size_t len_n_bytes = sizeof(uint32_t); // length of chunk
+        size_t ptr_n_bytes = sizeof(uint64_t) * (n_chunks + 1); // device pointer 
+	    size_t exp_out_n_bytes = len_n_bytes + ptr_n_bytes + data_n_bytes;
 
         *out = new uint8_t[exp_out_n_bytes];
         uint32_t* out_len = (uint32_t*)*out;
-        uint64_t* out_ptr = (uint64_t*)(*out + 8);
-        *out_len = n_chunks;
-        cuda_err_chk(cudaMemcpy(out_ptr, d_ptr, ptr_n_bytes, cudaMemcpyDeviceToHost));
-        cuda_err_chk(cudaMemcpy((*out) + len_n_bytes + ptr_n_bytes, d_shift, data_n_bytes, cudaMemcpyDeviceToHost));
+        *out_len = (n_chunks + 1);
+
+        cuda_err_chk(cudaMemcpy(*out + len_n_bytes, d_ptr, ptr_n_bytes, cudaMemcpyDeviceToHost));
+        cuda_err_chk(cudaMemcpy(*out + len_n_bytes + ptr_n_bytes, d_shift, data_n_bytes, cudaMemcpyDeviceToHost));
         cuda_err_chk(cudaFree(d_shift));
 
         *out_n_bytes = exp_out_n_bytes;
+    }
+
+    __host__ void decompress_gpu(const uint8_t* const in, uint8_t** out, const uint64_t in_n_bytes, uint64_t* out_n_bytes) {
+        uint8_t* d_in, *d_out;
+        uint64_t* d_ptr;
+        uint32_t n_ptr = (uint32_t)(*in);
+        uint32_t n_chunks = n_ptr - 1;
+
+        uint64_t header_bytes = sizeof(uint32_t) + sizeof(uint64_t) * n_ptr;
+        uint64_t data_n_bytes = in_n_bytes - header_bytes;
+
+        const uint64_t* ptr = (const uint64_t*)(in + sizeof(uint32_t));
+        cuda_err_chk(cudaMalloc((void**)&d_in, data_n_bytes));
+        cuda_err_chk(cudaMemcpy(d_in, in + header_bytes, data_n_bytes, cudaMemcpyHostToDevice));
+        cuda_err_chk(cudaMalloc((void**)&d_out, CHUNK_SIZE * n_chunks));
+        cuda_err_chk(cudaMalloc((void**)&d_ptr, sizeof(uint64_t) * n_ptr));
+        cuda_err_chk(cudaMemcpy(d_ptr, ptr, sizeof(uint64_t) * n_ptr, cudaMemcpyHostToDevice));
+
+        uint64_t grid_size = ceil<uint64_t>(n_chunks, BLK_SIZE);
+        kernel_decompress<<<grid_size, BLK_SIZE>>>(d_in, d_ptr, d_out, n_chunks);
+
+	    cuda_err_chk(cudaDeviceSynchronize());
+
+        uint64_t out_bytes = 12097;
+        *out = new uint8_t[out_bytes];
+	    cuda_err_chk(cudaMemcpy(*out, d_out, out_bytes, cudaMemcpyDeviceToHost));
+
+
+	    cuda_err_chk(cudaFree(d_in));
+	    cuda_err_chk(cudaFree(d_out));
+	    cuda_err_chk(cudaFree(d_ptr));
+        
+        *out_n_bytes = out_bytes;
     }
 }
