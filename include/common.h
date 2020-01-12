@@ -29,6 +29,13 @@ constexpr T pow(T base, T exponent) {
     return exponent == 0 ? 1 : base * pow(base, exponent - 1);
 }
 
+
+__host__ __device__
+constexpr uint32_t wrap(uint32_t value, uint32_t limit) {
+    return (((value) < (limit)) ? (value) : ((value) - (limit)));
+}
+
+#define WRAP(v, l) wrap(v, l)
 /* __host__ __device__ */
 /* int constexpr mod (int a, int b) */
 /* { */
