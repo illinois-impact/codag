@@ -6,12 +6,10 @@
 
 constexpr   uint32_t LOOKAHEAD_SIZE_() { return 4096; }
 constexpr   uint64_t CHUNK_SIZE_() { return 256*1024; }
-constexpr   uint64_t INPUT_SIZE_() { return 2048; }
 constexpr   uint16_t BLK_SIZE_() { return (1024); }
 
 #define LOOKAHEAD_SIZE			  LOOKAHEAD_SIZE_()			  
 #define CHUNK_SIZE                CHUNK_SIZE_()
-#define INPUT_SIZE                INPUT_SIZE_()
 #define BLK_SIZE			      BLK_SIZE_()			  
 
 #define MAX_LITERAL_SIZE 128
@@ -84,52 +82,62 @@ namespace brle {
 
         uint32_t my_chunk_size = min(in_n_bytes - tid * CHUNK_SIZE, CHUNK_SIZE);
 
+
         while (used_bytes < my_chunk_size) {
             while ((lookahead_count < LOOKAHEAD_SIZE) && (consumed_bytes < my_chunk_size))  {
                 lookahead[(lookahead_head + (lookahead_count++)) % LOOKAHEAD_SIZE] =
                 in[consumed_bytes++];
             }
-            
-            uint8_t c = lookahead[lookahead_head];
-            lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
-            used_bytes ++;
 
-            if (num_literals == 0) {
-                literals[num_literals++] = c;
-                tail_run = 1;
-            } else if (repeat) {
-                if (c == literals[0]) {
-                    num_literals ++;
-                    if (num_literals == MAXIMUM_REPEAT) {
-                        WRITE_VALUES;
-                    }
-                } else {
-                    WRITE_VALUES;
+            bool should_break = false;
+            while (lookahead_count-- > 0) {
+                uint8_t c = lookahead[lookahead_head];
+                used_bytes ++;
+
+                lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
+                
+                if (num_literals == 0) {
                     literals[num_literals++] = c;
                     tail_run = 1;
-                }
-            } else {
-                if (c == literals[num_literals - 1]) 
-                    tail_run ++;
-                else 
-                    tail_run = 1;
-
-                if (tail_run == MINIMUM_REPEAT) {
-                    if (num_literals + 1 == MINIMUM_REPEAT) {
-                        num_literals += 1;
+                } else if (repeat) {
+                    if (c == literals[0]) {
+                        num_literals ++;
+                        if (num_literals == MAXIMUM_REPEAT) {
+                            WRITE_VALUES;
+                            should_break = true;
+                        }
                     } else {
-                        num_literals -= MINIMUM_REPEAT - 1;
                         WRITE_VALUES;
-                        literals[0] = c;
-                        num_literals = MINIMUM_REPEAT;
+                        literals[num_literals++] = c;
+                        tail_run = 1;
+                        should_break = true;
                     }
-                    repeat = true;
                 } else {
-                    literals[num_literals++] = c;
-                    if (num_literals == MAX_LITERAL_SIZE) {
-                        WRITE_VALUES;
+                    if (c == literals[num_literals - 1]) 
+                        tail_run ++;
+                    else 
+                        tail_run = 1;
+
+                    if (tail_run == MINIMUM_REPEAT) {
+                        if (num_literals + 1 == MINIMUM_REPEAT) {
+                            num_literals += 1;
+                        } else {
+                            num_literals -= MINIMUM_REPEAT - 1;
+                            WRITE_VALUES;
+                            literals[0] = c;
+                            num_literals = MINIMUM_REPEAT;
+                            should_break = true;
+                        }
+                        repeat = true;
+                    } else {
+                        literals[num_literals++] = c;
+                        if (num_literals == MAX_LITERAL_SIZE) {
+                            WRITE_VALUES;
+                            should_break = true;
+                        }
                     }
                 }
+                if (should_break) break;
             }
         }
         WRITE_VALUES;
@@ -177,7 +185,6 @@ namespace brle {
 
         uint64_t data_n_bytes;
         cudaMemcpy(&data_n_bytes, d_ptr + n_chunks, sizeof(uint64_t), cudaMemcpyDeviceToHost);
-        printf("datalen:%ld\n", data_n_bytes);
         cuda_err_chk(cudaMalloc((void**)&d_shift, data_n_bytes * sizeof(uint8_t)));
         kernel_shift_data<<<grid_size, BLK_SIZE>>>(d_out, d_shift, d_ptr, n_chunks);
 
@@ -187,15 +194,27 @@ namespace brle {
 
         size_t len_n_bytes = sizeof(uint32_t); // length of chunk
         size_t ptr_n_bytes = sizeof(uint64_t) * (n_chunks + 1); // device pointer 
-	    size_t exp_out_n_bytes = len_n_bytes + ptr_n_bytes + data_n_bytes;
+	    size_t exp_out_n_bytes = len_n_bytes + ptr_n_bytes + sizeof(uint64_t) + data_n_bytes;
 
         *out = new uint8_t[exp_out_n_bytes];
-        uint32_t* out_len = (uint32_t*)*out;
-        *out_len = (n_chunks + 1);
+        uint32_t* ptr_len = (uint32_t*)*out;
+        *ptr_len = (n_chunks + 1);
 
         cuda_err_chk(cudaMemcpy(*out + len_n_bytes, d_ptr, ptr_n_bytes, cudaMemcpyDeviceToHost));
-        cuda_err_chk(cudaMemcpy(*out + len_n_bytes + ptr_n_bytes, d_shift, data_n_bytes, cudaMemcpyDeviceToHost));
+
+        
+        uint64_t* out_len = (uint64_t*)(*out + len_n_bytes + ptr_n_bytes);
+        *out_len = in_n_bytes;
+
+        cuda_err_chk(cudaMemcpy(*out + len_n_bytes + ptr_n_bytes + sizeof(uint64_t), d_shift, data_n_bytes, cudaMemcpyDeviceToHost));
         cuda_err_chk(cudaFree(d_shift));
+
+        // uint8_t* ptr = (uint8_t*)(*out + len_n_bytes + ptr_n_bytes + sizeof(uint64_t));
+        // for (int i=0; i<data_n_bytes; ++i) {
+        //     printf("output:%d\n", ptr[i]);
+        // }
+        // printf("expect:%lu\n", exp_out_n_bytes);
+        // printf("n_chunks:%u\n", n_chunks);
 
         *out_n_bytes = exp_out_n_bytes;
     }
@@ -209,9 +228,14 @@ namespace brle {
         uint64_t header_bytes = sizeof(uint32_t) + sizeof(uint64_t) * n_ptr;
         uint64_t data_n_bytes = in_n_bytes - header_bytes;
 
+        uint64_t out_bytes;
+
         const uint64_t* ptr = (const uint64_t*)(in + sizeof(uint32_t));
         cuda_err_chk(cudaMalloc((void**)&d_in, data_n_bytes));
-        cuda_err_chk(cudaMemcpy(d_in, in + header_bytes, data_n_bytes, cudaMemcpyHostToDevice));
+
+        out_bytes = *(uint64_t*)(in + header_bytes);
+
+        cuda_err_chk(cudaMemcpy(d_in, in + header_bytes + sizeof(uint64_t), data_n_bytes, cudaMemcpyHostToDevice));
         cuda_err_chk(cudaMalloc((void**)&d_out, CHUNK_SIZE * n_chunks));
         cuda_err_chk(cudaMalloc((void**)&d_ptr, sizeof(uint64_t) * n_ptr));
         cuda_err_chk(cudaMemcpy(d_ptr, ptr, sizeof(uint64_t) * n_ptr, cudaMemcpyHostToDevice));
@@ -221,7 +245,8 @@ namespace brle {
 
 	    cuda_err_chk(cudaDeviceSynchronize());
 
-        uint64_t out_bytes = 12097;
+        // printf("actual:%lu\n", out_bytes);
+
         *out = new uint8_t[out_bytes];
 	    cuda_err_chk(cudaMemcpy(*out, d_out, out_bytes, cudaMemcpyDeviceToHost));
 
