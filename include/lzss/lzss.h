@@ -9,7 +9,7 @@ constexpr   uint16_t BLK_SIZE_() { return (32); }
 constexpr   uint16_t BLKS_SM_()  { return (THRDS_SM_()/BLK_SIZE_()); }
 constexpr   uint64_t GRID_SIZE_() { return (1024); }
 constexpr   uint64_t NUM_CHUNKS_() { return (GRID_SIZE_()*BLK_SIZE_()); }
-constexpr   uint64_t CHUNK_SIZE_() { return (8*1024); }
+constexpr   uint64_t CHUNK_SIZE_() { return (4*1024); }
 constexpr   uint64_t HEADER_SIZE_() { return (1); }
 constexpr   uint32_t OVERHEAD_PER_CHUNK_(uint32_t d) { return (ceil<uint32_t>(d,(HEADER_SIZE_()*8))+1); } 
 constexpr   uint32_t HIST_SIZE_() { return 4096; }
@@ -83,7 +83,7 @@ namespace lzss {
 	if (max_len < MIN_MATCH_LENGTH)
 	    max_len = 0;
 	*length = max_len;
-	*offset = max_offset;
+	*offset = hist_count - max_offset;
 
     }
 
@@ -97,7 +97,7 @@ namespace lzss {
 	
 	    uint64_t out_start_idx = tid * CHUNK_SIZE;
 
-	    uint8_t hist[HIST_SIZE] = {DEFAULT_CHAR};
+	    //uint8_t hist[HIST_SIZE] = {DEFAULT_CHAR};
 	    uint8_t lookahead[LOOKAHEAD_SIZE];
 	    uint32_t hist_head  = 0;
 	    uint32_t hist_count = 0;
@@ -138,19 +138,12 @@ namespace lzss {
 			}
 			uint32_t length = (v & LENGTH_MASK(LENGTH_SIZE)) + MIN_MATCH_LENGTH;
 			uint32_t offset = v >> LENGTH_SIZE;
-			uint32_t hist_copy_start = hist_head + offset;
-			uint32_t hist_off = hist_head + hist_count;
+			uint64_t out_bytes_ = out_bytes; 
+			uint64_t out_copy_start = out_bytes_ - offset + out_start_idx;
 			for (size_t j = 0; (j < length) ; j++) {
-			    uint8_t z = hist[(hist_copy_start+j) % HIST_SIZE];
-			    out[out_start_idx + out_bytes++] = z;
-			    hist[(hist_off + j) % HIST_SIZE] = z;
+			    out[out_start_idx + out_bytes++] = out[out_copy_start+j];
 			    //if ((tid == 0) && (used_bytes < 100))
 			    //printf("b: %llu\t1: %c\t ub: %llu\tleng: %llu\toffset: %llu\tj: %llu\tv: %p\n", (unsigned long long) out_bytes, (char)z, (unsigned long long) used_bytes, (unsigned long long) length, (unsigned long long) offset, (unsigned long long) j,v);
-			}
-			hist_count += length;
-			if (hist_count > HIST_SIZE) {
-			    hist_head = (hist_head + (hist_count-HIST_SIZE)) % HIST_SIZE;
-			    hist_count = HIST_SIZE;
 			}
 			used_bytes += n_b;
 			
@@ -162,12 +155,6 @@ namespace lzss {
 			out[out_start_idx + out_bytes++] = v;
 			lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
 			lookahead_count--;
-			hist[(hist_head+hist_count)%HIST_SIZE] = v;
-			hist_count += 1;
-			if (hist_count > HIST_SIZE) {
-			    hist_head = (hist_head + (1)) % HIST_SIZE;
-			    hist_count = HIST_SIZE;
-			}
 			used_bytes++;
 		    }
 		}
