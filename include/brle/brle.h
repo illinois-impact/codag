@@ -222,7 +222,7 @@ namespace brle {
     __host__ void decompress_gpu(const uint8_t* const in, uint8_t** out, const uint64_t in_n_bytes, uint64_t* out_n_bytes) {
         uint8_t* d_in, *d_out;
         uint64_t* d_ptr;
-        uint32_t n_ptr = (uint32_t)(*in);
+        uint32_t n_ptr = *((uint32_t*)in);
         uint32_t n_chunks = n_ptr - 1;
 
         uint64_t header_bytes = sizeof(uint32_t) + sizeof(uint64_t) * n_ptr;
