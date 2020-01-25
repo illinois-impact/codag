@@ -5,41 +5,98 @@
 // #define uint8_t char
 
 constexpr   uint32_t LOOKAHEAD_SIZE_() { return 4096; }
-constexpr   uint64_t CHUNK_SIZE_() { return 256*1024; }
-constexpr   uint16_t BLK_SIZE_() { return (1024); }
+constexpr   uint64_t CHUNK_SIZE_() { return 256 * 1024; }
+constexpr   uint16_t BLK_SIZE_() { return 1024; }
+constexpr   uint16_t MAX_LITERAL_SIZE_() { return 128; }
+constexpr   uint8_t MINIMUM_REPEAT_() { return 3; }
+constexpr   uint8_t MAXIMUM_REPEAT_() { return 127 + MINIMUM_REPEAT_(); }
+constexpr   uint64_t OUTPUT_CHUNK_SIZE_() { return CHUNK_SIZE_() + (CHUNK_SIZE_() - 1) / MAX_LITERAL_SIZE_() + 1; }
 
-#define LOOKAHEAD_SIZE			  LOOKAHEAD_SIZE_()			  
+#define LOOKAHEAD_SIZE		      LOOKAHEAD_SIZE_()			  
 #define CHUNK_SIZE                CHUNK_SIZE_()
-#define BLK_SIZE			      BLK_SIZE_()			  
+#define BLK_SIZE                  BLK_SIZE_()			  
+#define MAX_LITERAL_SIZE          MAX_LITERAL_SIZE_()
+#define MINIMUM_REPEAT            MINIMUM_REPEAT_()
+#define MAXIMUM_REPEAT            MAXIMUM_REPEAT_()
+#define OUTPUT_CHUNK_SIZE         OUTPUT_CHUNK_SIZE_() //maximum output chunk size
 
-#define MAX_LITERAL_SIZE 128
-#define MINIMUM_REPEAT 3
-#define MAXIMUM_REPEAT (127 + MINIMUM_REPEAT)
-
-#define OUTPUT_CHUNK_SIZE (CHUNK_SIZE + (CHUNK_SIZE - 1) / MAX_LITERAL_SIZE + 1) //maximum output chunk size
+#define USE_LOOKAHEADd
 
 namespace brle {
     __host__ __device__ void decode(const uint8_t *in, uint8_t* out, const uint64_t *ptr, const uint64_t tid) {
         out += tid * CHUNK_SIZE;
         in += ptr[tid];
-        
-        uint64_t input_len = ptr[tid + 1] - ptr[tid];
-        uint64_t input_pos = 0;
+        uint64_t my_chunk_size = ptr[tid + 1] - ptr[tid];
+        uint64_t used_bytes = 0;
 
-        while (input_pos < input_len) {
-            // printf("pos:%ld len:%ld\n", input_pos, input_len);
-            uint64_t count;
-            uint8_t ch = in[input_pos ++];
+        // uint8_t regm[CHUNK_SIZE];
+        // uint64_t regm_ptr = 0;
+
+#ifdef USE_LOOKAHEAD
+#define READ_CHAR \
+	ch = lookahead[lookahead_head]; \
+	lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE; \
+	-- lookahead_count; \
+	++ used_bytes; \
+
+        uint8_t lookahead[LOOKAHEAD_SIZE];
+        uint32_t lookahead_head = 0;
+        uint32_t lookahead_count = 0;
+        uint64_t consumed_bytes = 0;
+	uint8_t ch;
+
+        while (used_bytes < my_chunk_size) {
+            while ((lookahead_count < LOOKAHEAD_SIZE) && (consumed_bytes < my_chunk_size))  {
+                lookahead[(lookahead_head + (lookahead_count++)) % LOOKAHEAD_SIZE] =
+                in[consumed_bytes++];
+            }
+
+	    READ_CHAR;
+
+	    uint64_t count;
             if (ch > 127) {
                 count = static_cast<uint64_t>(ch - 127);
-                memcpy(out, in + input_pos, count * sizeof(uint8_t));
-                input_pos += count;
+		for (uint64_t i=0; i<count; ++i) {
+			*(out++) = lookahead[lookahead_head];
+			lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
+		//	READ_CHAR;
+		//	*(out++) = ch;
+		}
+		lookahead_count -= count;
+                used_bytes += count;
             } else {
                 count = static_cast<uint64_t>(ch) + MINIMUM_REPEAT;
-                memset(out, in[input_pos ++], count * sizeof(uint8_t));
+		READ_CHAR;
+                memset(out, ch, count * sizeof(uint8_t));
+		out += count;
+            }
+        }
+#undef READ_CHAR
+#else
+        while (used_bytes < my_chunk_size) {
+            uint64_t count;
+            uint8_t ch = in[used_bytes ++];
+            if (ch > 127) {
+                count = static_cast<uint64_t>(ch - 127);
+                memcpy(out, in + used_bytes, count * sizeof(uint8_t));
+                used_bytes += count;
+            } else {
+                count = static_cast<uint64_t>(ch) + MINIMUM_REPEAT;
+                memset(out, in[used_bytes ++], count * sizeof(uint8_t));
             }
             out += count;
+            // if (ch > 127) {
+            //     count = static_cast<uint64_t>(ch - 127);
+            //     memcpy(regm[regm_ptr], in + used_bytes, count * sizeof(uint8_t));
+            //     used_bytes += count;
+            // } else {
+            //     count = static_cast<uint64_t>(ch) + MINIMUM_REPEAT;
+            //     memset(regm[regm_ptr], in[used_bytes++], count * sizeof(uint8_t));
+            // }
+            // regm_ptr += count;
         }
+        // memcpy(out, regm, regm_ptr * sizeof(uint8_t));
+#endif
     }
 
     __global__ void kernel_decompress(const uint8_t* compressed, const uint64_t *pos, uint8_t* uncompressed, const uint32_t n_chunks) {
@@ -49,6 +106,24 @@ namespace brle {
         }
         // ByteRleDecoder decoder(compressed + t * OUTPUT_CHUNK_SIZE, pos[t + 1] - pos[t]);
         // decoder.decode(uncompressed + t * CHUNK_SIZE);
+    }
+
+    __device__ void write_values(uint8_t* out, uint8_t* literals, uint32_t* num_literals, uint32_t* tail_run, uint32_t *pos, bool* repeat) {
+	if (*num_literals != 0) {
+		uint32_t t_num_literals = *num_literals, t_pos = *pos;
+	        if (*repeat) { 
+       			out[t_pos++] = static_cast<uint8_t>(t_num_literals - MINIMUM_REPEAT); 
+	        	out[t_pos++] = literals[0]; 
+        	} else { 
+			out[t_pos++] = static_cast<uint8_t>(t_num_literals + 127); 
+            		memcpy(out + t_pos, literals, sizeof(uint8_t) * t_num_literals); 
+        	   	t_pos += t_num_literals; 
+       		} 
+        	*repeat = false; 
+        	*tail_run = 0; 
+        	*num_literals = 0; 
+		*pos = t_pos;
+    	}
     }
 
     __host__ __device__ int encode(uint8_t* in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t tid) {
@@ -67,35 +142,35 @@ namespace brle {
         num_literals = 0; \
     } 
 
-        uint8_t lookahead[LOOKAHEAD_SIZE];
-        uint8_t literals[MAX_LITERAL_SIZE];
-
         uint32_t pos = 0;
         uint32_t num_literals = 0;
         uint32_t tail_run = 0;
         bool repeat = false;
+        uint64_t used_bytes = 0;
+        uint32_t my_chunk_size = min(in_n_bytes - tid * CHUNK_SIZE, CHUNK_SIZE);
 
+#ifdef USE_LOOKAHEAD
+        uint8_t lookahead[LOOKAHEAD_SIZE];
         uint32_t lookahead_head = 0;
         uint32_t lookahead_count = 0;
         uint64_t consumed_bytes = 0;
-        uint64_t used_bytes = 0;
-
-        uint32_t my_chunk_size = min(in_n_bytes - tid * CHUNK_SIZE, CHUNK_SIZE);
-
-
+#endif
+	    uint8_t literals[MAX_LITERAL_SIZE];
         while (used_bytes < my_chunk_size) {
+#ifdef USE_LOOKAHEAD
             while ((lookahead_count < LOOKAHEAD_SIZE) && (consumed_bytes < my_chunk_size))  {
                 lookahead[(lookahead_head + (lookahead_count++)) % LOOKAHEAD_SIZE] =
                 in[consumed_bytes++];
             }
 
-            bool should_break = false;
             while (lookahead_count-- > 0) {
                 uint8_t c = lookahead[lookahead_head];
+                lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
+#else
+		        uint8_t c = in[used_bytes];
+#endif
                 used_bytes ++;
 
-                lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
-                
                 if (num_literals == 0) {
                     literals[num_literals++] = c;
                     tail_run = 1;
@@ -104,13 +179,17 @@ namespace brle {
                         num_literals ++;
                         if (num_literals == MAXIMUM_REPEAT) {
                             WRITE_VALUES;
-                            should_break = true;
-                        }
+#ifdef USE_LOOKAHEAD
+			                break;
+#endif			   
+			            }
                     } else {
                         WRITE_VALUES;
                         literals[num_literals++] = c;
                         tail_run = 1;
-                        should_break = true;
+#ifdef USE_LOOKAHEAD
+			break;
+#endif
                     }
                 } else {
                     if (c == literals[num_literals - 1]) 
@@ -121,28 +200,32 @@ namespace brle {
                     if (tail_run == MINIMUM_REPEAT) {
                         if (num_literals + 1 == MINIMUM_REPEAT) {
                             num_literals += 1;
+			    repeat = true;
                         } else {
                             num_literals -= MINIMUM_REPEAT - 1;
                             WRITE_VALUES;
                             literals[0] = c;
                             num_literals = MINIMUM_REPEAT;
-                            should_break = true;
+			    repeat = true;
+#ifdef USE_LOOKAHEAD
+			    break;
+#endif
                         }
-                        repeat = true;
                     } else {
                         literals[num_literals++] = c;
                         if (num_literals == MAX_LITERAL_SIZE) {
                             WRITE_VALUES;
-                            should_break = true;
-                        }
+#ifdef USE_LOOKAHEAD
+			    break;
+			}
+#endif
                     }
                 }
-                if (should_break) break;
             }
         }
         WRITE_VALUES;
-    #undef WRITE_VALUES
 
+    #undef WRITE_VALUES
         return pos;
     }
 
@@ -222,7 +305,7 @@ namespace brle {
     __host__ void decompress_gpu(const uint8_t* const in, uint8_t** out, const uint64_t in_n_bytes, uint64_t* out_n_bytes) {
         uint8_t* d_in, *d_out;
         uint64_t* d_ptr;
-        uint32_t n_ptr = (uint32_t)(*in);
+        uint32_t n_ptr = *((uint32_t*)in);
         uint32_t n_chunks = n_ptr - 1;
 
         uint64_t header_bytes = sizeof(uint32_t) + sizeof(uint64_t) * n_ptr;
@@ -248,12 +331,12 @@ namespace brle {
         // printf("actual:%lu\n", out_bytes);
 
         *out = new uint8_t[out_bytes];
-	    cuda_err_chk(cudaMemcpy(*out, d_out, out_bytes, cudaMemcpyDeviceToHost));
+	cuda_err_chk(cudaMemcpy(*out, d_out, out_bytes, cudaMemcpyDeviceToHost));
 
 
-	    cuda_err_chk(cudaFree(d_in));
-	    cuda_err_chk(cudaFree(d_out));
-	    cuda_err_chk(cudaFree(d_ptr));
+	cuda_err_chk(cudaFree(d_in));
+	cuda_err_chk(cudaFree(d_out));
+	cuda_err_chk(cudaFree(d_ptr));
         
         *out_n_bytes = out_bytes;
     }
