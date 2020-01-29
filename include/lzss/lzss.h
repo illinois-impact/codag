@@ -12,7 +12,7 @@ constexpr   uint64_t NUM_CHUNKS_() { return (GRID_SIZE_()*BLK_SIZE_()); }
 constexpr   uint64_t CHUNK_SIZE_() { return (4*1024); }
 constexpr   uint64_t HEADER_SIZE_() { return (1); }
 constexpr   uint32_t OVERHEAD_PER_CHUNK_(uint32_t d) { return (ceil<uint32_t>(d,(HEADER_SIZE_()*8))+1); } 
-constexpr   uint32_t HIST_SIZE_() { return 4096; }
+constexpr   uint32_t HIST_SIZE_() { return 2048; }
 constexpr   uint32_t LOOKAHEAD_SIZE_() { return 4096; }
 constexpr   uint32_t OFFSET_SIZE_() { return (bitsNeeded((uint32_t)HIST_SIZE_())); }
 constexpr   uint32_t LENGTH_SIZE_() { return (4); }
@@ -48,7 +48,7 @@ constexpr   uint64_t WARP_ID_(uint64_t t) { return t/32; }
 
 namespace lzss {
     __host__ __device__ void find_match(const uint8_t* const  hist, const uint32_t hist_head, const uint32_t hist_count, const uint8_t* const lookahead, const uint32_t lookahead_head, const uint32_t lookahead_count, uint32_t* offset, uint32_t* length) {
-	uint32_t hist_offset = 0;
+	uint32_t hist_offset = 1;
 	uint32_t f_length = 0;
 	uint32_t max_len = 0;
 	uint32_t max_offset = 0;
@@ -230,7 +230,7 @@ namespace lzss {
 		    }
 		    uint32_t hist_start = hist_head+hist_count;
 		    for (size_t i = 0; i < length; i++) {
-			uint8_t z = lookahead[(lookahead_head+i) % HIST_SIZE];
+			uint8_t z = lookahead[(lookahead_head+i) % LOOKAHEAD_SIZE];
 			hist[(hist_start+i) % HIST_SIZE]= z;
 			//if ((tid == 0) && (out_bytes < 100))
 			//	printf("b: %llu\t1: %c\t ub: %llu\tleng: %llu\toffset: %llu\tj: %llu\tv: %p\n", (unsigned long long) out_bytes, (char)z, (unsigned long long) used_bytes, (unsigned long long) length, (unsigned long long) offset, (unsigned long long) i,v2);
@@ -361,7 +361,7 @@ namespace lzss {
 		    }
 		    uint32_t hist_start = hist_head+hist_count;
 		    for (size_t i = 0; i < length; i++) {
-			uint8_t z = lookahead[(lookahead_head+i) % HIST_SIZE];
+			uint8_t z = lookahead[(lookahead_head+i) % LOOKAHEAD_SIZE];
 			hist[(hist_start+i) % HIST_SIZE]= z;
 			//if ((tid == 0) && (out_bytes < 100))
 			//	printf("b: %llu\t1: %c\t ub: %llu\tleng: %llu\toffset: %llu\tj: %llu\tv: %p\n", (unsigned long long) out_bytes, (char)z, (unsigned long long) used_bytes, (unsigned long long) length, (unsigned long long) offset, (unsigned long long) i,v2);
@@ -512,7 +512,7 @@ namespace lzss {
 		    }
 		    uint32_t hist_start = hist_head+hist_count;
 		    for (size_t i = 0; i < length; i++) {
-			uint8_t z = lookahead[(lookahead_head+i) % HIST_SIZE];
+			uint8_t z = lookahead[(lookahead_head+i) % LOOKAHEAD_SIZE];
 			hist[(hist_start+i) % HIST_SIZE]= z;
 			//if ((tid == 0) && (out_bytes < 100))
 			//	printf("b: %llu\t1: %c\t ub: %llu\tleng: %llu\toffset: %llu\tj: %llu\tv: %p\n", (unsigned long long) out_bytes, (char)z, (unsigned long long) used_bytes, (unsigned long long) length, (unsigned long long) offset, (unsigned long long) i,v2);
