@@ -1,3 +1,4 @@
+
 CC   = gcc
 CXX  = g++
 NVCC = nvcc
@@ -6,6 +7,7 @@ BUILD_DIR ?= ./build
 SRC_DIRS ?= ./src
 INC_DIRS ?= ./include
 EXE_DIR ?= $(BUILD_DIR)/exec
+SIMT_DIR ?= ./freestanding
 
 SRCS := $(shell find $(SRC_DIRS) -name *.cpp -or -name *.c -or -name *.s -or -name *.cu)
 SRCS_NAMES := $(shell find $(SRC_DIRS) -name *.cpp -or -name *.c -or -name *.s -or -name *.cu -printf "%f\n")
@@ -13,7 +15,7 @@ OBJS := $(SRCS:%=$(BUILD_DIR)/obj/%.o)
 EXES := $(SRCS:%=$(BUILD_DIR)/exe/%.exe)
 DEPS := $(OBJS:.o=.d)
 
-INCL_DIRS := $(shell find $(INC_DIRS) -type d)  
+INCL_DIRS := $(shell find $(INC_DIRS) -type d) $(SIMT_DIR)/include 
 
 #INC_DIRS  := ./include
 INC_FLAGS := $(addprefix -I,$(INCL_DIRS))

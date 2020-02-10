@@ -1,0 +1,4 @@
+[submodule "freestanding"]
+	path = freestanding
+	url = https://github.com/ogiroux/freestanding
+	branch = master

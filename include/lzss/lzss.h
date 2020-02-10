@@ -3,13 +3,22 @@
 #include <thrust/scan.h>
 #include <thrust/execution_policy.h>
 #include <cub/cub.cuh>
+#include <simt/atomic>
+
+#include <unistd.h>
+#include <sys/types.h> 
+#include <sys/stat.h> 
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <chrono>
+#include <iostream>
 
 constexpr   uint16_t THRDS_SM_() { return (2048); }
 constexpr   uint16_t BLK_SIZE_() { return (32); }
 constexpr   uint16_t BLKS_SM_()  { return (THRDS_SM_()/BLK_SIZE_()); }
 constexpr   uint64_t GRID_SIZE_() { return (1024); }
 constexpr   uint64_t NUM_CHUNKS_() { return (GRID_SIZE_()*BLK_SIZE_()); }
-constexpr   uint64_t CHUNK_SIZE_() { return (4*1024); }
+constexpr   uint64_t CHUNK_SIZE_() { return (4*1024*32); }
 constexpr   uint64_t HEADER_SIZE_() { return (1); }
 constexpr   uint32_t OVERHEAD_PER_CHUNK_(uint32_t d) { return (ceil<uint32_t>(d,(HEADER_SIZE_()*8))+1); } 
 constexpr   uint32_t HIST_SIZE_() { return 2048; }
@@ -28,6 +37,11 @@ constexpr   uint32_t LOOKAHEAD_UNITS_() { return LOOKAHEAD_SIZE_()/READ_UNITS_()
 constexpr   uint64_t WARP_ID_(uint64_t t) { return t/32; }
 constexpr   uint32_t LOOKAHEAD_SIZE_4_BYTES_() { return  LOOKAHEAD_SIZE_()/sizeof(uint32_t); }
 constexpr   uint32_t HIST_SIZE_4_BYTES_() { return  HIST_SIZE_()/sizeof(uint32_t); }
+constexpr   uint32_t LOOKAHEAD_SIZE_4_BYTES_MASK_() { return  LENGTH_MASK_(bitsNeeded(LOOKAHEAD_SIZE_4_BYTES_())); }
+constexpr   uint32_t LOOKAHEAD_SIZE_MASK_() { return  LENGTH_MASK_(bitsNeeded(LOOKAHEAD_SIZE_())); }
+constexpr   uint32_t HIST_SIZE_4_BYTES_MASK_() { return  LENGTH_MASK_(bitsNeeded(HIST_SIZE_4_BYTES_())); }
+constexpr   uint32_t HIST_SIZE_MASK_() { return  LENGTH_MASK_(bitsNeeded(HIST_SIZE_())); }
+
 
 #define BLKS_SM                           BLKS_SM_()
 #define THRDS_SM                          THRDS_SM_()
@@ -53,8 +67,10 @@ constexpr   uint32_t HIST_SIZE_4_BYTES_() { return  HIST_SIZE_()/sizeof(uint32_t
 #define HISTORY_SIZE_4_BYTES              HISTORY_SIZE_4_BYTES_()
 #define REF_SIZE                          REF_SIZE_()
 #define REF_SIZE_BYTES                    REF_SIZE_BYTES()
-    
-
+#define LOOKAHEAD_SIZE_4_BYTES_MASK       LOOKAHEAD_SIZE_4_BYTES_MASK_()
+#define LOOKAHEAD_SIZE_MASK               LOOKAHEAD_SIZE_MASK_()
+#define HIST_SIZE_4_BYTES_MASK            HIST_SIZE_4_BYTES_MASK_()
+#define HIST_SIZE_MASK                    HIST_SIZE_MASK_()
 namespace lzss {
     __host__ __device__ void find_match(const uint8_t* const  hist, const uint32_t hist_head, const uint32_t hist_count, const uint8_t* const lookahead, const uint32_t lookahead_head, const uint32_t lookahead_count, uint32_t* offset, uint32_t* length) {
 	uint32_t hist_offset = 1;
@@ -95,38 +111,38 @@ namespace lzss {
 	*offset = hist_count - max_offset;
 
     }
-    
-
-    __host__ __device__ void decompress_func_new(const uint8_t* const in, uint32_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const lens, const uint64_t tid) {
-	
-	__shared__ uint32_t in_[32][LOOKAHEAD_SIZE_4_BYTES];
-	__shared__ uint32_t out_[32][HIST_SIZE_4_BYTES];
-
-	__shared__ simt::atomic<uint32_t,  simt::thread_scope_block> in_head_[32] = {0};
-	__shared__ simt::atomic<uint32_t,  simt::thread_scope_block> out_head_[32] = {0};
-
-	__shared__ simt::atomic<uint32_t,  simt::thread_scope_block> in_tail_[32] = {0};
-	__shared__ simt::atomic<uint32_t,  simt::thread_scope_block> out_tail_[32] = {0};
+    /*
+    __host__ __device__ void decompress_func_new(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const blk_off, const uint64_t* const col_len, const uint8_t* const col_map) {
 	uint64_t tid = threadIdx.x + blockIdx.x * blockDim.x;
 	uint64_t wid = WARP_ID(tid);
-	uint32_t which = threadIdx.y;
-
-	uint64_t in_start_idx = (wid == 0) ? 0 : lens[wid-1];
-	const uint32_t* const in_4 = (in+in_start_idx)/sizeof(uint32_t);
-	uint64_t in_end_idx = lens[wid];
-	uint32_t my_chunk_size = off[tid];
-	uint8-t my_map = map[tid];
-        uint32_t pred = (my_chunk_size % sizeof(uint32_t));
+	uint64_t lane_id = tid%32;
+	uint64_t in_start_idx = blk_off[wid];
+	uint64_t in_end_idx = blk_off[wid+1];
+	uint8_t my_map = col_map[tid];
+	uint64_t my_col_len = col_len[tid];
+	uint32_t my_chunk_size = my_col_len;
+	uint32_t pred = (my_chunk_size % sizeof(uint32_t));
 	uint32_t my_chunk_size_ = pred ? my_chunk_size + (sizeof(uint32_t) - pred) : my_chunk_size;
 	uint32_t my_chunk_size_4 = my_chunk_size_ / sizeof(uint32_t);
-	uint64_t used_bytes = 0;
-	uint64_t out_bytes = 0;
-	uint64_t out_start_idx = wid * out_chunk_size;
-	const uint32_t* const out_4 = (out+out_start_idx)/sizeof(uint32_t);
 
-	uint64_t lane_id = tid%32;
+	
+	uint32_t lookahead_4[LOOKAHEAD_SIZE];
+
+	uint8_t lookahead = (uint8_t*) lookahead_4;
+
+	uint32_t in_4 = (uint32_t*) (in + in_start_idx);
+	uint8_t hist[HIST_SIZE];
+	uint32_t hist_head = 0;
+	uint32_t hist_count = 0;
+	uint32_t lookahead_head = 0;
+	uint32_t lookahead_count = 0;
+	uint32_t lookahead_head_4 = 0;
+	uint32_t lookahead_count_4 = 0;
+
+	uint64_t in_itr = 0;
+	uint64_t out_itr = 0;
+	uint32_t which = threadIdx.y;
 	if (wid < n_chunks) {
-	    //input
 	    if (which == 0) {
 		uint64_t offset = 0;
 		while (used_bytes < my_chunk_size_4) {
@@ -155,32 +171,164 @@ namespace lzss {
 		     
 		}
 	    }
+	    while (used_bytes < my_chunk_size) {
+		uint32_t lookahead_head_4_bef = lookahead_head_4;
+		uint32_t 
+		    while ((lookahead_count_4 < LOOKAHEAD_SIZE_4_BYTES) && (in_itr < my_chunk_size_4))  {
+			lookahead_4[(lookahead_head_4 + (lookahead_count_4++)) & LOOKAHEAD_SIZE_4_BYTES_MASK] =
+			    in_[lane_id + (itr++ * 32)];
+		    }
+		lookahead_count += (lookahead_count_4-lookahead_cound_4_bef) * sizeof(uint32_t);
+
+		uint8_t header = lookahead[(lookahead_head) & LOOKAHEAD_SIZE_MASK];
+		lookahead_head = (lookahead_head + 1) & LOOKAHEAD_SIZE_MASK;
+
+		used_bytes++;
+
+		for (size_t i = 0; (i < 8) && (used_bytes < my_chunk_size); i++, header>>=1) {
+		    uint8_t type = header & 0x01;
+
+		    if (type == 0) {
+			uint32_t n_b = MIN_MATCH_LENGTH - 1;
+
+			uint64_t v = 0;
+			for (size_t j = 0; j < n_b; j++) {
+			    uint64_t k = ((uint64_t)lookahead[(lookahead_head)]) << (j*8);
+			    //printf("k: %llu\n", (unsigned long long) (k >>(j*8)));
+			    v |= k;
+			    lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
+			    lookahead_count--;
+			}
+			uint32_t length = (v & LENGTH_MASK(LENGTH_SIZE)) + MIN_MATCH_LENGTH;
+			uint32_t offset = v >> LENGTH_SIZE;
+			uint64_t out_bytes_ = out_bytes; 
+			uint64_t out_copy_start = out_bytes_ - offset + out_start_idx;
+			for (size_t j = 0; (j < length) ; j++) {
+			    out[out_start_idx + out_bytes++] = out[out_copy_start+j];
+			    //if ((tid == 0) && (used_bytes < 100))
+			    //printf("b: %llu\t1: %c\t ub: %llu\tleng: %llu\toffset: %llu\tj: %llu\tv: %p\n", (unsigned long long) out_bytes, (char)z, (unsigned long long) used_bytes, (unsigned long long) length, (unsigned long long) offset, (unsigned long long) j,v);
+			}
+			used_bytes += n_b;
+			
+		    }
+		    else {
+			uint8_t v = lookahead[(lookahead_head)];
+			//if ((tid == 0) && (used_bytes < 100))
+			//printf("b: %llu\t1: %c\t ub: %llu\n", (unsigned long long) out_bytes, (char)v, (unsigned long long) used_bytes);
+			out[out_start_idx + out_bytes++] = v;
+			lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
+			lookahead_count--;
+			used_bytes++;
+		    }
+
+		}
+	    }
+	
+	}
+    }
+*/
+
+    
+   __device__ void decompress_func_new(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const blk_off, const uint64_t* const col_len, const uint8_t* const col_map) {
+	
+	__shared__ uint32_t in_[LOOKAHEAD_SIZE_4_BYTES][32];
+
+	//__shared__ uint32_t out_[LOOKAHEAD_SIZE_4_BYTES][32];
+		
+	__shared__ simt::atomic<uint32_t,  simt::thread_scope_block> in_head_[32];
+
+	__shared__ simt::atomic<uint32_t,  simt::thread_scope_block> in_tail_[32];
+
+	//__shared__ simt::atomic<uint32_t,  simt::thread_scope_block> out_head_[32] = {0};
+
+	//__shared__ simt::atomic<uint32_t,  simt::thread_scope_block> out_tail_[32] = {0};
+	uint64_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+	uint64_t wid = WARP_ID(tid);
+	uint32_t which = threadIdx.y;
+
+        uint64_t in_start_idx = blk_off[wid];
+	const uint32_t* in_4 = (const uint32_t* ) (in + in_start_idx);
+	uint64_t in_end_idx = blk_off[wid+1];
+        uint8_t my_map = col_map[tid];
+	uint64_t my_col_len = col_len[tid];
+	uint32_t my_chunk_size = my_col_len;
+	uint32_t pred = (my_chunk_size % sizeof(uint32_t));
+	uint32_t my_chunk_size_ = pred ? my_chunk_size + (sizeof(uint32_t) - pred) : my_chunk_size;
+	uint32_t my_chunk_size_4 = my_chunk_size_ / sizeof(uint32_t);
+
+	uint64_t used_bytes = 0;
+	uint64_t out_bytes = 0;
+	uint64_t out_start_idx = (wid * out_chunk_size);
+	uint32_t* out_4 = (uint32_t*) (out + out_start_idx);
+
+	uint64_t lane_id = tid%32;
+	if (wid < n_chunks) {
+	    if (which == 0) {
+		in_head_[lane_id] = 0;
+		in_tail_[lane_id] = 0;
+	    }
+	    __syncthreads();
+	    //input
+	    if (which == 0) {
+		uint64_t offset = 0;
+		while (used_bytes < my_chunk_size_4) {
+		    unsigned active_mask = __activemask();
+		    
+		    uint32_t val = in_4[offset  + lane_id];
+		    used_bytes+=4;
+		    
+		    unsigned active_count = __popc(active_mask);
+		    offset += active_count;
+
+		r1:
+		    const auto cur_tail = in_tail_[lane_id].load(simt::memory_order_relaxed);
+		    const auto next_tail = (cur_tail  + 1) & LOOKAHEAD_SIZE_4_BYTES_MASK;
+		    if (next_tail != in_head_[lane_id].load(simt::memory_order_acquire)) {
+			in_[cur_tail][lane_id] = val;
+			in_tail_[lane_id].store(next_tail, simt::memory_order_release);
+		    }
+		    else {
+			__nanosleep(100);
+			goto r1;
+		    }
+		    __syncwarp(active_mask);
+
+		   
+		     
+		}
+	    }
 	    //compute
 	    else if (which == 1) {
+		//printf("here\n");
 		uint32_t in_v = 0;
 		uint32_t out_v = 0;
 
-		uint8_t* in_v_ = &in_v;
-		uint8_t* out_v_ = &out_v;
+		uint8_t* in_v_ = (uint8_t*)&in_v;
+		uint8_t* out_v_ = (uint8_t*)&out_v;
 
 		uint8_t in_v_h = 0;
 		uint8_t out_v_h = 0;
 		uint8_t header = 0;
-		
 
+		uint8_t hist[HIST_SIZE];
+		uint32_t hist_head = 0;
+		uint32_t hist_count = 0;
+		uint32_t hist_copied = 0;
+		
+		uint64_t out_itr = 0;
 		while (used_bytes < my_chunk_size) {
 
 		    if (in_v_h == 0) {
 		    
-		    r3:
+		    r2:
 			const auto cur_head = in_head_[lane_id].load(simt::memory_order_relaxed);
 			if (cur_head == in_tail_[lane_id].load(simt::memory_order_acquire)) {
 			    __nanosleep(100);
-			    goto r3;
+			    goto r2;
 			}
 
-			in_v = in_[lane_id][cur_heead];
-			const auto next_head = (cur_head + 1) % LOOKAHEAD_SIZE_4_BYTES;
+			in_v = in_[cur_head][lane_id];
+			const auto next_head = (cur_head + 1) & LOOKAHEAD_SIZE_4_BYTES_MASK;
 			in_head_[lane_id].store(next_head, simt::memory_order_release);
 
 			
@@ -193,15 +341,15 @@ namespace lzss {
 		    used_bytes++;
 		    if (in_v_h == 0) {
 		    
-		    r4:
+		    r3:
 			const auto cur_head = in_head_[lane_id].load(simt::memory_order_relaxed);
 			if (cur_head == in_tail_[lane_id].load(simt::memory_order_acquire)) {
 			    __nanosleep(100);
-			    goto r4;
+			    goto r3;
 			}
 
-			in_v = in_[lane_id][cur_head];
-			const auto next_head = (cur_head + 1) % LOOKAHEAD_SIZE_4_BYTES;
+			in_v = in_[cur_head][lane_id];
+			const auto next_head = (cur_head + 1) & LOOKAHEAD_SIZE_4_BYTES_MASK;
 			in_head_[lane_id].store(next_head, simt::memory_order_release);
 
 			
@@ -218,15 +366,15 @@ namespace lzss {
 
 			     if (in_v_h == 0) {
 		    
-			     r5:
+			     r4:
 				 const auto cur_head = in_head_[lane_id].load(simt::memory_order_relaxed);
 				 if (cur_head == in_tail_[lane_id].load(simt::memory_order_acquire)) {
  				     __nanosleep(100);
-				     goto r5;
+				     goto r4;
 				 }
 
-				 in_v = in_[lane_id][cur_head];
-				 const auto next_head = (cur_head + 1) % LOOKAHEAD_SIZE_4_BYTES;
+				 in_v = in_[cur_head][lane_id];
+				 const auto next_head = (cur_head + 1) & LOOKAHEAD_SIZE_4_BYTES_MASK;
 				 in_head_[lane_id].store(next_head, simt::memory_order_release);
 
 			
@@ -246,8 +394,8 @@ namespace lzss {
 				     goto r5;
 				 }
 
-				 in_v = in_[lane_id][cur_head];
-				 const auto next_head = (cur_head + 1) % LOOKAHEAD_SIZE_4_BYTES;
+				 in_v = in_[cur_head][lane_id];
+				 const auto next_head = (cur_head + 1)  & LOOKAHEAD_SIZE_4_BYTES_MASK;
 				 in_head_[lane_id].store(next_head, simt::memory_order_release);
 
 			
@@ -255,57 +403,68 @@ namespace lzss {
 
 			     }
 
-			     uint64_t v = ((uint64_t))(byte1) << 8) | byte2;
+			     uint64_t v = (((uint64_t)(byte1)) << 8) | byte2;
 			      uint32_t length = (v & LENGTH_MASK(LENGTH_SIZE)) + MIN_MATCH_LENGTH;
 			      uint32_t offset = v >> LENGTH_SIZE;
-			      uint32_t t =  out_tail_[lane_id].load(simt::memory_order_relaxed);
-			      uint32_t real_tail = * sizeof(uint32_t) + out_v_h;
-			      
-			      
-			      bool o_g = (offset > out_v_h);
-			      uint32_t o_  = (o_g) * ( offset - out_v_h);
-			      uint32_t o_4 = (o_ + sizeof(uint32_t) -1)/ sizeof(uint32_t);
-			      uint32_t o_4_o = (o_g) * (o_ - (o_4 * sizeof(uint32)));
-			      
+			      uint32_t read_start_off = hist_head+hist_count-offset;
+			      uint32_t write_start_off = hist_head+hist_count;
+			      for (size_t j = 0; j< length; j++) {
+				  uint8_t s = hist[(read_start_off + j) & HIST_SIZE_MASK];
+				  hist[(write_start_off + j) & HIST_SIZE_MASK] = s;
+
+				  out_v_[out_v_h] = s;
+				  out_v_h = (out_v_h + 1) & 0x03;
 			     
-			      uint32_t offset_queue = 
 
-			      for (size_t j = 0; j < length; ) {
+				  if (out_v_h == 0) {
+				      out_4[(out_itr++)* 32 + my_map] = out_v;
+				  }
 
-				  
 			      }
-			     
-			     
 
-			 }
-			 //literal
-			 else {
-			     out_v_[out_v_h] = in_v_[in_v_h];
-			     in_v_h = (in_v_h + 1) & 0x03;
+			      hist_count += length;
+			      if (hist_count > HIST_SIZE) {
+				  hist_head = (hist_head + (length)) & HIST_SIZE_MASK;
+				  hist_count = HIST_SIZE;
+			      }
+
+		    }
+		    //literal
+		    else {
+			uint8_t s = in_v_[in_v_h];
+			out_v_[out_v_h] = s;
+			in_v_h = (in_v_h + 1) & 0x03;
 			     used_bytes++;
 			     if (in_v_h == 0 && used_bytes < my_chunk_size) {
 		    
-			     r5:
+			     r6:
 				 const auto cur_head = in_head_[lane_id].load(simt::memory_order_relaxed);
 				 if (cur_head == in_tail_[lane_id].load(simt::memory_order_acquire)) {
  				     __nanosleep(100);
-				     goto r5;
+				     goto r6;
 				 }
 
-				 in_v = in_[lane_id][cur_head];
-				 const auto next_head = (cur_head + 1) % LOOKAHEAD_SIZE_4_BYTES;
+				 in_v = in_[cur_head][lane_id];
+				 const auto next_head = (cur_head + 1)  & LOOKAHEAD_SIZE_4_BYTES_MASK;
 				 in_head_[lane_id].store(next_head, simt::memory_order_release);
 
 			
 		    
 
 			     }
+			     hist[(hist_head+hist_count) & HIST_SIZE_MASK] = s;
 
-
+			     hist_count += 1;
+			     if (hist_count > HIST_SIZE) {
+				 hist_head = (hist_head + (1)) & HIST_SIZE_MASK;
+				 hist_count = HIST_SIZE;
+			     }
 			     out_v_h = (out_v_h + 1) & 0x03;
+			     
 
 			     if (out_v_h == 0) {
-
+				 out_4[(out_itr++)* 32 + my_map] = out_v;
+                            /*
 			     r6:
 				 const auto cur_tail = out_tail_[lane_id].load(simt::memory_order_relaxed);
 				 const auto next_tail = (cur_tail + 1) %  HIST_SIZE_4_BYTES;
@@ -317,6 +476,7 @@ namespace lzss {
 				     __nanosleep(100);
 				     goto r6;
 				 }
+				 */
 
 			     }
 
@@ -332,6 +492,7 @@ namespace lzss {
 		
 	    }
 	    //output
+	    /*
 	    else {
 		uint32_t itr = 0;
 		while (used_bytes < out_chunk_size) {
@@ -359,14 +520,13 @@ namespace lzss {
 		}
 		
 	    }
+	    */
 
 	}
 	
 
     }
     
-    
-
     __host__ __device__ void decompress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const lens, const uint64_t tid) {
 	if (tid < n_chunks) {
 	    //uint8_t out_[CHUNK_SIZE];
@@ -880,12 +1040,287 @@ namespace lzss {
 	}
 	
     }
+/*
+    __device__ __host__ void decompress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const blk_off, const uint64_t* const col_len, const uint8_t* const col_map) {
+	__shared__ uint32_t in_[32][LOOKAHEAD_SIZE_4_BYTES];
+	__shared__ uint32_t out_[32][HIST_SIZE_4_BYTES];
+
+	__shared__ simt::atomic<uint32_t,  simt::thread_scope_block> in_head_[32] = {0};
+	__shared__ simt::atomic<uint32_t,  simt::thread_scope_block> out_head_[32] = {0};
+
+	__shared__ simt::atomic<uint32_t,  simt::thread_scope_block> in_tail_[32] = {0};
+	__shared__ simt::atomic<uint32_t,  simt::thread_scope_block> out_tail_[32] = {0};
+	uint64_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+	uint64_t wid = WARP_ID(tid);
+	uint32_t which = threadIdx.y;
+
+	uint64_t in_start_idx = (wid == 0) ? 0 : lens[wid-1];
+	const uint32_t* const in_4 = (in+in_start_idx)/sizeof(uint32_t);
+	uint64_t in_end_idx = lens[wid];
+	uint32_t my_chunk_size = off[tid];
+	uint8_t my_map = map[tid];
+        uint32_t pred = (my_chunk_size % sizeof(uint32_t));
+	uint32_t my_chunk_size_ = pred ? my_chunk_size + (sizeof(uint32_t) - pred) : my_chunk_size;
+	uint32_t my_chunk_size_4 = my_chunk_size_ / sizeof(uint32_t);
+	uint64_t used_bytes = 0;
+	uint64_t out_bytes = 0;
+	uint64_t out_start_idx = wid * out_chunk_size;
+	const uint32_t* const out_4 = (out+out_start_idx)/sizeof(uint32_t);
+
+	uint64_t lane_id = tid%32;
+	if (wid < n_chunks) {
+	    //input
+	    if (which == 0) {
+		uint64_t offset = 0;
+		while (used_bytes < my_chunk_size_4) {
+		    unsigned active_mask = __activemask();
+		    
+		    uint32_t val = in_4[offset  + laneid];
+		    used_bytes+=4;
+		    
+		    unsigned active_count = __popc(active_mask);
+		    offset += active_count;
+
+		r1:
+		    const auto cur_tail = in_tail_[lane_id].load(simt::memory_order_relaxed);
+		    const auto next_tail = (cur_tail  + 1) % LOOKAHEAD_SIZE_4_BYTES;
+		    if (next_tail != in_head_[lane_id].load(simt::memory_order_acquire)) {
+			in_[lane_id][cur_tail] = val;
+			in_tail_[lane_id].store(next_tail, simt::memory_order_release);
+		    }
+		    else {
+			__nanosleep(100);
+			goto r1;
+		    }
+		    __sync_warp(active_mask);
+
+		   
+		     
+		}
+	    }
+	    //compute
+	    else if (which == 1) {
+		uint32_t in_v = 0;
+		uint32_t out_v = 0;
+
+		uint8_t* in_v_ = &in_v;
+		uint8_t* out_v_ = &out_v;
+
+		uint8_t in_v_h = 0;
+		uint8_t out_v_h = 0;
+		uint8_t header = 0;
+		
+
+		while (used_bytes < my_chunk_size) {
+
+		    if (in_v_h == 0) {
+		    
+		    r3:
+			const auto cur_head = in_head_[lane_id].load(simt::memory_order_relaxed);
+			if (cur_head == in_tail_[lane_id].load(simt::memory_order_acquire)) {
+			    __nanosleep(100);
+			    goto r3;
+			}
+
+			in_v = in_[lane_id][cur_heead];
+			const auto next_head = (cur_head + 1) % LOOKAHEAD_SIZE_4_BYTES;
+			in_head_[lane_id].store(next_head, simt::memory_order_release);
+
+			
+		    
+
+		    }
+		    header = in_v_[in_v_h];
+		    in_v_h = (in_v_h + 1) & 0x03;
+		    
+		    used_bytes++;
+		    if (in_v_h == 0) {
+		    
+		    r4:
+			const auto cur_head = in_head_[lane_id].load(simt::memory_order_relaxed);
+			if (cur_head == in_tail_[lane_id].load(simt::memory_order_acquire)) {
+			    __nanosleep(100);
+			    goto r4;
+			}
+
+			in_v = in_[lane_id][cur_head];
+			const auto next_head = (cur_head + 1) % LOOKAHEAD_SIZE_4_BYTES;
+			in_head_[lane_id].store(next_head, simt::memory_order_release);
+
+			
+		    
+
+		    }
+
+		    for (size_t i = 0; (i < 8) && (used_bytes < my_chunk_size); i++, header>>=1) {
+			 uint8_t type = header & 0x01;
+			 //ref
+			 if (type == 0) {
+			     uint8_t byte1 = in_v_[in_v_h];
+			     in_v_h = (in_v_h + 1) & 0x03;
+
+			     if (in_v_h == 0) {
+		    
+			     r5:
+				 const auto cur_head = in_head_[lane_id].load(simt::memory_order_relaxed);
+				 if (cur_head == in_tail_[lane_id].load(simt::memory_order_acquire)) {
+ 				     __nanosleep(100);
+				     goto r5;
+				 }
+
+				 in_v = in_[lane_id][cur_head];
+				 const auto next_head = (cur_head + 1) % LOOKAHEAD_SIZE_4_BYTES;
+				 in_head_[lane_id].store(next_head, simt::memory_order_release);
+
+			
+		    
+
+			     }
+
+			     uint8_t byte2 = in_v_[in_v_h];
+			     in_v_h = (in_v_h + 1) & 0x03;
+			     used_bytes += 2;
+			     if (in_v_h == 0 && used_bytes < my_chunk_size) {
+		    
+			     r5:
+				 const auto cur_head = in_head_[lane_id].load(simt::memory_order_relaxed);
+				 if (cur_head == in_tail_[lane_id].load(simt::memory_order_acquire)) {
+ 				     __nanosleep(100);
+				     goto r5;
+				 }
+
+				 in_v = in_[lane_id][cur_head];
+				 const auto next_head = (cur_head + 1) % LOOKAHEAD_SIZE_4_BYTES;
+				 in_head_[lane_id].store(next_head, simt::memory_order_release);
+
+			
+		    
+
+			     }
+
+			     uint64_t v = ((uint64_t))(byte1) << 8) | byte2;
+			      uint32_t length = (v & LENGTH_MASK(LENGTH_SIZE)) + MIN_MATCH_LENGTH;
+			      uint32_t offset = v >> LENGTH_SIZE;
+			      uint32_t t =  out_tail_[lane_id].load(simt::memory_order_relaxed);
+			      uint32_t real_tail = * sizeof(uint32_t) + out_v_h;
+			      
+			      
+			      bool o_g = (offset > out_v_h);
+			      uint32_t o_  = (o_g) * ( offset - out_v_h);
+			      uint32_t o_4 = (o_ + sizeof(uint32_t) -1)/ sizeof(uint32_t);
+			      uint32_t o_4_o = (o_g) * (o_ - (o_4 * sizeof(uint32)));
+			      
+			     
+			      uint32_t offset_queue = 
+
+			      for (size_t j = 0; j < length; ) {
+
+				  
+			      }
+			     
+			     
+
+			 }
+			 //literal
+			 else {
+			     out_v_[out_v_h] = in_v_[in_v_h];
+			     in_v_h = (in_v_h + 1) & 0x03;
+			     used_bytes++;
+			     if (in_v_h == 0 && used_bytes < my_chunk_size) {
+		    
+			     r5:
+				 const auto cur_head = in_head_[lane_id].load(simt::memory_order_relaxed);
+				 if (cur_head == in_tail_[lane_id].load(simt::memory_order_acquire)) {
+ 				     __nanosleep(100);
+				     goto r5;
+				 }
+
+				 in_v = in_[lane_id][cur_head];
+				 const auto next_head = (cur_head + 1) % LOOKAHEAD_SIZE_4_BYTES;
+				 in_head_[lane_id].store(next_head, simt::memory_order_release);
+
+			
+		    
+
+			     }
+
+
+			     out_v_h = (out_v_h + 1) & 0x03;
+
+			     if (out_v_h == 0) {
+
+			     r6:
+				 const auto cur_tail = out_tail_[lane_id].load(simt::memory_order_relaxed);
+				 const auto next_tail = (cur_tail + 1) %  HIST_SIZE_4_BYTES;
+				 if (next_tail != out_head_[lane_id].load(simt::memory_order_acquire)) {
+				     out_[lane_id][cur_tail] = out_v;
+				     out_tail_[lane_id].store(next_tail, simt::memory_order_release);
+				 }
+				 else {
+				     __nanosleep(100);
+				     goto r6;
+				 }
+
+			     }
+
+			     
+			     
+
+			 }
+			
+		    }
+		    
+		}
+		
+		
+	    }
+	    //output
+	    else {
+		uint32_t itr = 0;
+		while (used_bytes < out_chunk_size) {
+		    unsigned active_mask = __activemask();
+
+		r2:
+		    const auto cur_head = out_head_[lane_id].load(simt::mmemory_order_relaxed);
+		    if (cur_head == out_tail_[lane_id].load(simt::memory_order_acquire)) {
+
+			__nanosleep(100);
+			goto r2;
+
+		    }
+		    
+		    uint32_t val = out_[lane_id][cur_head];
+		    const auto next_head = (cur_head + 1) % HIST_SIZE_4_BYTES;
+		    out_head_[lane_id].store(next_head, simt::memory_order_release);
+
+		    __sync_warp(active_mask);
+
+		    out_4[itr*32 + my_map] = val;
+
+		    used_bytes += sizeof(uint32_t);
+		    itr++;
+		}
+		
+	    }
+
+	}
+	
+    }
+*/
 
     __global__ void
     __launch_bounds__(32, 32)
     kernel_decompress(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const lens) {
 	uint64_t tid = threadIdx.x + blockDim.x * blockIdx.x;
 	decompress_func(in, out, in_n_bytes, out_n_bytes, out_chunk_size, n_chunks, lens, tid);
+    }
+
+
+    __global__ void
+    __launch_bounds__(64, 32)
+	kernel_decompress(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const blk_off, const uint64_t* const col_len, const uint8_t* const col_map) {
+	uint64_t tid = threadIdx.x + blockDim.x * blockIdx.x;
+	decompress_func_new(in, out, in_n_bytes, out_n_bytes, out_chunk_size, n_chunks, blk_off, col_len, col_map);
     }
 
     __global__ void
@@ -984,7 +1419,7 @@ namespace lzss {
 	
     }
 
-    __host__ void decompress_gpu(const uint8_t* const in, uint8_t** out, const uint64_t in_n_bytes, uint64_t* out_n_bytes) {
+    __host__ void decompress_gpu_base(const uint8_t* const in, uint8_t** out, const uint64_t in_n_bytes, uint64_t* out_n_bytes) {
 	uint8_t* d_in;
 	uint8_t* d_out;
 	uint64_t* d_lens;
@@ -1047,5 +1482,137 @@ namespace lzss {
 	cuda_err_chk(cudaFree(d_lens));
 	
     }
+
+    __host__ void decompress_gpu(const uint8_t* const in, uint8_t** out, const uint64_t in_n_bytes, uint64_t* out_n_bytes) {
+	uint8_t* d_in;
+	uint8_t* d_out;
+	uint64_t* d_lens;
+
+	const uint64_t* const in_64 = (const uint64_t*) in;
+
+
+	int blk_off_fd;
+	struct stat blk_off_sb;
+	uint64_t* blk_off;
+	if((blk_off_fd = open("blk_offset.bin", O_RDONLY)) == 0) {
+	    printf("Fatal Error: blk_offset File open error\n");
+	    //return -1;
+	}
+
+	fstat(blk_off_fd, &blk_off_sb);
+
+	blk_off = (uint64_t*) mmap(nullptr, blk_off_sb.st_size, PROT_READ, MAP_PRIVATE, blk_off_fd, 0);
+
+	if(blk_off == (void*)-1){
+	    printf("Fatal Error: blk_offset Mapping error\n");
+	    //return -1;
+	}
+
+	int col_len_fd;
+	struct stat col_len_sb;
+	uint64_t* col_len;
+	if((col_len_fd = open("col_len.bin", O_RDONLY)) == 0) {
+	    printf("Fatal Error: col_len File open error\n");
+	    //return -1;
+	}
+
+	fstat(col_len_fd, &col_len_sb);
+
+	col_len = (uint64_t*)mmap(nullptr, col_len_sb.st_size, PROT_READ, MAP_PRIVATE, col_len_fd, 0);
+
+	if(col_len == (void*)-1){
+	    printf("Fatal Error: col_len Mapping error\n");
+	    //return -1;
+	}
+
+	int col_map_fd;
+	struct stat col_map_sb;
+	uint8_t* col_map;
+	if((col_map_fd = open("col_map.bin", O_RDONLY)) == 0) {
+	    printf("Fatal Error: col_map File open error\n");
+	    //return -1;
+	}
+
+	fstat(col_map_fd, &col_map_sb);
+
+	col_map = (uint8_t*)mmap(nullptr, col_map_sb.st_size, PROT_READ, MAP_PRIVATE, col_map_fd, 0);
+
+	if(col_map == (void*)-1){
+	    printf("Fatal Error: col_map Mapping error\n");
+	    //return -1;
+	}
+
+	uint64_t n_chunks = (blk_off_sb.st_size/sizeof(uint64_t)) - 1;
+	uint64_t out_size = n_chunks * CHUNK_SIZE;
+
+
+	uint64_t* d_blk_off;
+	cuda_err_chk(cudaMalloc(&d_blk_off, blk_off_sb.st_size));
+
+	uint64_t* d_col_len;
+	cuda_err_chk(cudaMalloc(&d_col_len, col_len_sb.st_size));
+
+	uint8_t* d_col_map;
+	cuda_err_chk(cudaMalloc(&d_col_map, col_map_sb.st_size));
+	
+
+	cuda_err_chk(cudaMemcpy(d_blk_off, blk_off, blk_off_sb.st_size, cudaMemcpyHostToDevice));
+
+	cuda_err_chk(cudaMemcpy(d_col_len, col_len, col_len_sb.st_size, cudaMemcpyHostToDevice));
+
+	cuda_err_chk(cudaMemcpy(d_col_map, col_map, col_map_sb.st_size, cudaMemcpyHostToDevice));
+
+	
+
+	
+	*out_n_bytes = out_size;
+	uint64_t out_bytes = *out_n_bytes;
+
+	/*
+	const uint32_t* const in_32 = (const uint32_t*) (in + sizeof(uint64_t));
+	uint32_t chunk_size = in_32[0];
+	uint32_t n_chunks = in_32[1];
+	uint32_t hist_size = in_32[2];
+	uint32_t min_match_len = in_32[3];
+	uint32_t max_match_len = in_32[4];
+
+	
+	uint64_t len_bytes =  (n_chunks*sizeof(uint64_t));
+	uint64_t head_bytes = HEAD_INTS*sizeof(uint32_t);
+	*/
+	//const uint64_t* const lens = (const uint64_t*) (in + head_bytes);
+	const uint8_t* const in_ = in ;
+	
+
+	cuda_err_chk(cudaMalloc(&d_in, in_n_bytes));
+	cuda_err_chk(cudaMalloc(&d_out, (*out_n_bytes)));
+	//printf("out_bytes: %p\td_out: %p\tchunk_size: %llu\tn_chunks: %llu\tHIST_SIZE: %llu\tMIN_MATCH_LENGTH: %llu\tMAX_MATCH_LENGTH: %llu\tOFFSET_SIZE: %llu\tbitsNeeded(4096): %llu\n",
+	//out_bytes, d_out, chunk_size, n_chunks, hist_size, min_match_len, max_match_len, OFFSET_SIZE, bitsNeeded(HIST_SIZE));
+
+	//return;
+	
+	cuda_err_chk(cudaMemcpy(d_in, in_, in_n_bytes, cudaMemcpyHostToDevice));
+	
+	
+	dim3 grid_size( n_chunks);
+	dim3 blk(BLK_SIZE,2);
+	std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
+        kernel_decompress<<<grid_size, blk>>>(d_in, d_out, in_n_bytes, out_size, CHUNK_SIZE, n_chunks, d_blk_off, d_col_len, d_col_map);
+	cuda_err_chk(cudaDeviceSynchronize());
+	std::chrono::high_resolution_clock::time_point kernel_end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> total = std::chrono::duration_cast<std::chrono::duration<double>>(kernel_end - kernel_start);
+	std::cout << "kernel time: " << total.count() << " secs\n";
+	printf("in bytes: %llu\n", in_n_bytes);
+
+	*out = new uint8_t[out_bytes];
+	cuda_err_chk(cudaMemcpy((*out), d_out, out_bytes, cudaMemcpyDeviceToHost));
+	printf("bytes: %llu\n",*out_n_bytes );
+
+
+	cuda_err_chk(cudaFree(d_out));
+	cuda_err_chk(cudaFree(d_in));
+	
+    }
+
 
 }
