@@ -208,19 +208,17 @@ void cpu_shift(const uint8_t* in, uint8_t* out, uint64_t* blk_offset, const uint
 		while(copied_len < chunk_len){
 
 
-					//printf("copied_len %llu\n",copied_len );
+			//printf("copied_len %llu\n",copied_len );
 
 			for(int t_idx = 0; t_idx < BLK_SIZE; t_idx++){
 
-				uint8_t col_idx = col_map[chunk_id * BLK_SIZE + t_idx];
+				uint8_t col_idx = col_map[chunk_id * BLK_SIZE + t_idx] + BLK_SIZE * chunk_id;
+				//uint8_t col_idx = col_map[chunk_id * BLK_SIZE + t_idx];
+
 
 				//uint64_t col_len = col_offset[BLK_SIZE * chunk_id + col_idx + 1] - col_offset[BLK_SIZE * chunk_id + col_idx];
-				uint64_t col_len = col_offset[col_idx + 1] - col_offset[col_idx];
-
-
-				// if(copied_len == 0){
-				// 	printf("col len: %llu\n",col_len );
-				// }
+				//uint64_t col_len = col_offset[col_idx + 1] - col_offset[col_idx];
+				uint64_t col_len = len_out[t_idx + BLK_SIZE*chunk_id];
 
 				if(cur_copied[t_idx] < col_len){
 					for(int i = 0; i < 4; i++){
@@ -235,7 +233,6 @@ void cpu_shift(const uint8_t* in, uint8_t* out, uint64_t* blk_offset, const uint
 						else{
 							// out[out_bytes] = in[b_offset + col_offset[BLK_SIZE * chunk_id + col_idx] + byte_read[t_idx]];
 							out[out_bytes] = in[b_offset + col_offset[col_idx] + byte_read[t_idx]];
-
 
 							byte_read[t_idx]++;
 							cur_copied[t_idx]++;
@@ -252,11 +249,11 @@ void cpu_shift(const uint8_t* in, uint8_t* out, uint64_t* blk_offset, const uint
 		}
 
 
-		uint8_t rem = 128 - out_bytes % 128;
-		if(rem != 128){
-					out_bytes += rem;
+		// uint8_t rem = 128 - out_bytes % 128;
+		// if(rem != 128){
+		// 			out_bytes += rem;
 
-		}
+		// }
 
 	}
 
@@ -273,12 +270,15 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
 					   const uint64_t in_chunk_size, const uint64_t out_chunk_size, const uint64_t n_chunks, uint64_t* len_out,  uint8_t* col_map, uint64_t* blk_offset, uint64_t* col_offset, uint64_t* chunk_offset_array) {
 
 	blk_offset[0] = 0;
-	col_offset[0] = 0;
+	
 	chunk_offset_array[0] = 0;
 
-    uint8_t hist[BLK_SIZE][HIST_SIZE] = {DEFAULT_CHAR};
+   
+
+	uint8_t hist[BLK_SIZE][HIST_SIZE] = {DEFAULT_CHAR};
     uint8_t lookahead[BLK_SIZE][LOOKAHEAD_SIZE] = {DEFAULT_CHAR};
-	uint32_t hist_head[BLK_SIZE]  = {0};
+
+    uint32_t hist_head[BLK_SIZE]  = {0};
     uint32_t hist_count[BLK_SIZE] = {0};
     uint32_t lookahead_head[BLK_SIZE] = {0};
     uint32_t lookahead_count[BLK_SIZE] = {0};
@@ -292,10 +292,6 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
     uint64_t in_off[BLK_SIZE] = {0};
 	uint8_t in_flag[BLK_SIZE] = {0};
 
-	uint64_t padding_counter[BLK_SIZE + 1] = {0};
-
-
-
 	//int64_t my_chunk_size = (in_n_bytes / BLK_SIZE);
 	int64_t my_chunk_size = (CHUNK_SIZE / BLK_SIZE);
 
@@ -307,7 +303,6 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
 
 	//lens[BLK_SIZE] = {0};
 	//<len, col>
-	std::pair<uint64_t, uint8_t> lens[BLK_SIZE];
 
 
 	printf("Num chunks: %i\n", NUM_CHUNKS);
@@ -322,28 +317,49 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
 		if(chunk_id % 100 == 0){
 			printf("chunk_id: %i\n", chunk_id);
 		}
+		//check
+		col_offset[chunk_id*BLK_SIZE] = 0;
 
-//check
+//checkcol_offset[0] = 0;
 		in_start_idx = chunk_id * in_chunk_size;
 		out_start_idx = chunk_offset;
 
-		hist[BLK_SIZE][HIST_SIZE] = {DEFAULT_CHAR};
-	    lookahead[BLK_SIZE][LOOKAHEAD_SIZE] = {DEFAULT_CHAR};
- 		hist_head[BLK_SIZE]  = {0};
-	    hist_count[BLK_SIZE] = {0};
-	    lookahead_head[BLK_SIZE] = {0};
-	    lookahead_count[BLK_SIZE] = {0};
-	    consumed_bytes[BLK_SIZE] = {0};
+
+		
+
+		uint64_t padding_counter[BLK_SIZE + 1] = {0};
+		std::pair<uint64_t, uint8_t> lens[BLK_SIZE];
+
 	    out_bytes = 1;
 	    cur_header_byte_pos = 0;
 	    header_byte = 0;
 	    blocks = 0;
 	    used_bytes = 0;
+   
 
-	    in_off[BLK_SIZE] = {0};
-	    in_flag[BLK_SIZE] = {0};
+	    for(int k = 0; k  < BLK_SIZE; k++){
+	    	hist_head[k]  = 0;
+		    hist_count[k] = 0;
+		    lookahead_head[k] = 0;
+		    lookahead_count[k] = 0;
+		    consumed_bytes[k] = 0;
+		    in_off[k] = 0;
+		    in_flag[k] = 0;
 
-		padding_counter[BLK_SIZE + 1] = {0};
+
+
+	    }
+ 		
+	 //    out_bytes = 1;
+	 //    cur_header_byte_pos = 0;
+	 //    header_byte = 0;
+	 //    blocks = 0;
+	 //    used_bytes = 0;
+
+	 //    in_off[BLK_SIZE] = {0};
+	 //    in_flag[BLK_SIZE] = {0};
+
+		// padding_counter[BLK_SIZE + 1] = {0};
 
 
 
@@ -354,20 +370,7 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
 
 	    for(int t_idx = 0; t_idx < BLK_SIZE; t_idx++){
 
-	    	// printf("t_idx: %i\n", t_idx);
-	    	// printf("my_chunk_size %llu\n", my_chunk_size);
 
-	    	//printf("blocks idx: %u\n", blocks);
-
-
-	    	// if(blocks != 0){
-	    	// 	uint8_t diff = 8 - blocks;
-	    	// 	out_bytes += diff;
-	    	// 	cur_header_byte_pos += diff;
-	    	// 	//chunk_offset += diff;
-	    	// 	padding_counter[t_idx] += diff;
-
-	    	// }
 	    	cur_header_byte_pos = out_bytes - 1;
 
 
@@ -476,20 +479,15 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
 
 	
 	
+	    for(int i = 0; i < BLK_SIZE - 1; i++){
+	    	//lens[i].first += padding_counter[i+1];
+	    	if(i == 0){
+	    		col_offset[BLK_SIZE * chunk_id] = 0;
+	    	}
+	    	else{
+	    		col_offset[BLK_SIZE * chunk_id + i + 1] = col_offset[BLK_SIZE * chunk_id + i] + lens[i].first;
 
-   		// if(blocks != 0){
-	    // 		uint8_t diff = 8 - blocks;
-	    // 		out_bytes += diff;
-	    // 		cur_header_byte_pos += diff;
-	    // 		//chunk_offset += diff;
-	    // 		padding_counter[BLK_SIZE] += diff;
-
-	    // 	}
-
-	    for(int i = 0; i < BLK_SIZE; i++){
-	    	lens[i].first += padding_counter[i+1];
-
-			col_offset[BLK_SIZE * chunk_id + i + 1] = col_offset[BLK_SIZE * chunk_id + i] + lens[i].first;
+	    	}
 			//col_offset[BLK_SIZE * chunk_id + i + 1] += padding_counter[i+1];
 	    	
 	    }
@@ -503,7 +501,7 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
 		for(int i = 0; i < BLK_SIZE; i++){
        		chunk_len += lens[i].first;
 			len_out[chunk_id*BLK_SIZE+i] = lens[i].first;
-			col_map[chunk_id*BLK_SIZE+i] = lens[i].second + BLK_SIZE * chunk_id;
+			col_map[chunk_id*BLK_SIZE+i] = lens[i].second;
 
 
 		}
