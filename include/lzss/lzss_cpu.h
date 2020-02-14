@@ -7,6 +7,17 @@
 #include <algorithm>
 #include <fstream>
 
+#include <unistd.h>
+#include <iostream>
+#include <cstring>
+#include <unistd.h>
+#include <sys/types.h> 
+#include <sys/stat.h> 
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <chrono>
+
+
 constexpr   uint16_t THRDS_SM_() { return (2048); }
 constexpr   uint16_t BLK_SIZE_() { return (32); }
 constexpr   uint16_t BLKS_SM_()  { return (THRDS_SM_()/BLK_SIZE_()); }
@@ -300,6 +311,7 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
 	uint64_t out_start_idx;
 
 	uint64_t chunk_offset = 0;
+	uint64_t chunk_offset2 = 0;
 
 	//lens[BLK_SIZE] = {0};
 	//<len, col>
@@ -322,7 +334,7 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
 
 //checkcol_offset[0] = 0;
 		in_start_idx = chunk_id * in_chunk_size;
-		out_start_idx = chunk_offset;
+		out_start_idx = chunk_offset2;
 
 
 		
@@ -508,6 +520,8 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
 
 
 		blk_offset[chunk_id+1] = chunk_len;
+
+		chunk_offset2 += ((chunk_len + 127)/128) * 128;
 		//check the constant
 		//chunk_offset += ceil(chunk_len / 128) * 128;
 		chunk_offset += chunk_len;
@@ -1128,13 +1142,13 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
 
 	uint64_t blk_padding = 0;
 	for(int i = 0; i < num_chunk; i++){
-		blk_offset[i+1] = chunk_offset[i+1]; 
+		blk_offset[i+1] = blk_offset[i]; 
 		uint64_t temp_len = chunk_offset[i+1] - chunk_offset[i];
-		uint8_t rem = temp_len %128;
-		if(rem != 0){
-			blk_padding += 128 - rem;
-			blk_offset[i+1] += blk_padding;
-		}
+
+		temp_len = ((temp_len +127)/128)*128;
+
+		blk_offset[i+1] +=  temp_len;
+		
 	}
 
 	final_out_size += blk_padding;
@@ -1168,7 +1182,7 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
 	col_map_file.close();
 
 	std::ofstream col_len_file ("col_len.bin",std::ofstream::binary);
-	col_len_file.write ((const char *)(len_out),  BLK_SIZE * num_chunk * 8);
+	col_len_file.write ((const  char *)(len_out),  BLK_SIZE * num_chunk * 8);
 	col_len_file.close();
 
 
@@ -1198,7 +1212,7 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
 
 	//uint64_t out_data_bytes = chunk_offset[NUM_CHUNKS-1];
 	//have to change
-	uint64_t out_data_bytes = chunk_offset[num_chunk];
+	uint64_t out_data_bytes = blk_offset[num_chunk];
 	printf("out_data_bytes: %llu\n", out_data_bytes);
 
 
@@ -1215,7 +1229,7 @@ void cpu_compress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_
 	memcpy((*out) , cpu_final_out, out_data_bytes);
 
 	//printf("first byte: %p\n", ((*out) +  head_bytes + len_bytes)[0]);
-	*out_n_bytes = head_bytes + len_bytes + out_data_bytes;
+	*out_n_bytes = out_data_bytes;
 
 	 printf("first byte: %p\n", ((*out) )[0]);
         // *out_n_bytes = out_data_bytes;
