@@ -24,6 +24,8 @@ constexpr   uint16_t BLKS_SM_()  { return (THRDS_SM_()/BLK_SIZE_()); }
 constexpr   uint64_t GRID_SIZE_() { return (1024); }
 constexpr   uint64_t NUM_CHUNKS_() { return (GRID_SIZE_()*BLK_SIZE_()); }
 constexpr   uint64_t CHUNK_SIZE_() { return (4*1024*2); }
+constexpr   uint64_t INPUT_BUFFER_SIZE() { return (32*4); }
+
 
 constexpr   uint64_t HEADER_SIZE_() { return (1); }
 constexpr   uint32_t OVERHEAD_PER_CHUNK_(uint32_t d) { return (ceil<uint32_t>(d,(HEADER_SIZE_()*8))+1); } 
@@ -67,6 +69,8 @@ constexpr   uint32_t HIST_SIZE_4_BYTES_() { return  HIST_SIZE_()/sizeof(uint32_t
 #define LOOKAHEAD_UNITS                   LOOKAHEAD_UNITS_()
 #define WARP_ID(t)                        WARP_ID_(t)
 
+#define INPUT_BUFFER_SIZE				INPUT_BUFFER_SIZE()
+
 #define char_len							4
 
 namespace brle_trans {
@@ -76,21 +80,54 @@ namespace brle_trans {
     							    const uint64_t n_chunks,
     							    uint64_t* col_len,  uint8_t* col_map, uint64_t* blk_offset){
 
-		__shared__ uint64_t shared_col_len[BLK_SIZE*4];
+		__shared__ uint64_t shared_col_len[BLK_SIZE + 1];
+		__shared__ uint64_t shared_col_diff[BLK_SIZE];
+		__shared__ uint8_t shared_col_count[BLK_SIZE];
 
-		int tid = threadIdx.x % 32;
-	    int chunk_idx = blockIdx.x * 4 + (threadIdx.x / 32);
+		//int tid = threadIdx.x % 32;
+	    //int chunk_idx = blockIdx.x * 4 + (threadIdx.x / 32);
+	    int part_idx = (threadIdx.x / 32);
 
-
-//	    int tid = threadIdx.x;
-//	    int chunk_idx = blockIdx.x;
+	    int tid = threadIdx.x;
+        int chunk_idx = blockIdx.x;
 	    shared_col_len[threadIdx.x] = col_len[BLK_SIZE * chunk_idx + tid];
     	
     	__syncthreads();
 
+    	if(tid == 0){
+    		shared_col_diff[tid] = ((shared_col_len[BLK_SIZE - 1 - tid] +3)/4)*4;
+    	}
+    	else{
+    		shared_col_diff[tid] = ((shared_col_len[BLK_SIZE - 1 - tid] +3)/4)*4 - ((shared_col_len[BLK_SIZE - 1 - tid + 1] +3)/4)*4;
+    	}
 
-    	int block_flag = (threadIdx.x / 32);
+    	//will parallelize this part
+    	if (tid == 0){
+    		// uint32_t prev_col = 0;
+    		// for(int i = 0; i < BLK_SIZE; i++){
+    		// 	shared_col_diff[i] = ((shared_col_len[BLK_SIZE - 1 - i] +3)/4)*4 - prev_col;
+    		// 	prev_col = ((shared_col_len[BLK_SIZE - 1 - i] +3)/4)*4;
+    		// }
 
+    		uint8_t prev_count = 0;
+
+    		for(int i = BLK_SIZE - 1; i >= 0; i--) {
+    			if(shared_col_diff[i] != 0){
+    				shared_col_count[i] = prev_count + 1;
+    				prev_count = 0;
+    			}
+    			else{
+    				shared_col_count[i] = 0;
+    				prev_count ++;
+    			}
+    		}
+
+    	}
+
+    	__syncthreads();
+
+    
+ 
 	   	uint64_t used_bytes = 0;
 	   	uint64_t mychunk_size = col_len[BLK_SIZE * chunk_idx + tid];
 
@@ -106,7 +143,6 @@ namespace brle_trans {
 
 	    uint64_t out_start_idx = chunk_idx * CHUNK_SIZE;
 
-	    bool compress_flag = false;
 	    uint8_t compress_counter;
 
 	    uint64_t col_idx = col_map[BLK_SIZE * chunk_idx + tid];
@@ -114,137 +150,120 @@ namespace brle_trans {
 
 		uint8_t v = 0;
 
-		uint32_t data_buffer;
 		uint32_t* in_4B = (uint32_t *)(&(in[in_start_idx]));
 		uint32_t in_4B_off = 0;
-		uint32_t in_counter = 4;
 		uint8_t c_flag = 0;
 
-		int data_counter = 0;
 
 		uint32_t temp_buffer = 0;
 
 		uint32_t* out_4B = (uint32_t*)(&(out[out_start_idx + col_idx*4]));
 
+		uint8_t input_buffer[INPUT_BUFFER_SIZE];
+		uint8_t input_buffer_head = 0;
+		uint8_t input_buffer_tail = 0;
+		uint8_t input_buffer_count = 0;
+		uint8_t input_buffer_read_count = 0;
+
+		uint32_t data_tracker = 0;
+		uint32_t data_off_array[BLK_SIZE];
+		
+		uint8_t track_idx = 0;
+		uint64_t temp_count = shared_col_diff[track_idx];
+
+
+		
+
 
 		while(used_bytes  < mychunk_size){
 
-			c_flag = (head_byte & 1);
+			//read the data 
+			int num_read_count = ((INPUT_BUFFER_SIZE - input_buffer_count) / 4);
+			if( num_read_count != 0 && (input_buffer_read_count < mychunk_size)){
+				for(int i = 0; i < num_read_count; i++){
+					uint32_t* input_buffer_4B = (uint32_t *)(&(input_buffer[input_buffer_tail]));
+					
+		
+					input_buffer_4B[0] = in_4B[in_4B_off + tid];
+					input_buffer_tail = (input_buffer_tail + 4) % INPUT_BUFFER_SIZE;
+					input_buffer_count += 4;	
+					input_buffer_read_count += 4;
 
-			
-			if(in_counter == 4){
-				data_buffer = in_4B[in_4B_off + tid];
-				data_counter++;
-				while((data_counter * 4 > (((shared_col_len[block_flag * 32 + col_counter - 1] + 3)/4)*4)) && (col_counter > 1)){
-							col_counter--;
+					temp_count -= 4;
+					
+					in_4B_off += col_counter;
+					if(temp_count == 0){
+						if(track_idx < 32){
+							uint64_t count_shift = shared_col_count[track_idx];
+							col_counter -= count_shift;
+							track_idx += count_shift;
+							temp_count = shared_col_diff[track_idx];
+						}
+						else{
+							col_counter = 0;
+						}
+
+					}
+					
+
 				}
 
-				in_4B_off += col_counter;
-				in_counter = 0;		
-				
 			}
+
 		
 
 			if(block == 0){
-				v = ((uint8_t*)(&data_buffer)) [in_counter];
+				v = input_buffer[input_buffer_head];
+				input_buffer_head = (input_buffer_head + 1) % INPUT_BUFFER_SIZE;
+				input_buffer_count--;
+
 				head_byte = v;
 				block++;
-
-				in_counter++;
 				used_bytes++;
 
-				if(in_counter == 4){
-					data_buffer = in_4B[in_4B_off + tid];
-					data_counter++;
-
-					while((data_counter * 4 > (((shared_col_len[block_flag * 32 + col_counter - 1] + 3)/4)*4)) && (col_counter > 1)){
-								col_counter--;
-					}
-
-					in_4B_off += col_counter;
-					in_counter = 0;
-					
+			}
+			
+			else{
+				c_flag = (head_byte & 1);
+				
+				if(c_flag == 0){
+					compress_counter = input_buffer[input_buffer_head];
+					input_buffer_head = (input_buffer_head + 1) % INPUT_BUFFER_SIZE;
+					input_buffer_count--;
+					used_bytes++;
 				}
-			}
 
-			else if(c_flag == 0 && compress_flag == false){
-				v = ((uint8_t*)(&data_buffer)) [in_counter];
-				compress_flag = true;
-				compress_counter = v;
-
-				in_counter++;
-				used_bytes++;
-
-				if(in_counter == 4){
-					data_buffer = in_4B[in_4B_off + tid];
-					data_counter++;
-
-					while((data_counter * 4 > (((shared_col_len[block_flag * 32 + col_counter - 1] + 3)/4)*4)) && (col_counter > 1)){
-								col_counter--;
-					}
-
-					in_4B_off += col_counter;						
-					in_counter = 0;
-				
-				}	
-
-		
-
-			}
+				//4B read
+				for(int i = 0; i < 4; i++){
+					((uint8_t*)(&temp_buffer))[i] = input_buffer[input_buffer_head];
+					input_buffer_head = (input_buffer_head + 1) % INPUT_BUFFER_SIZE;
+					input_buffer_count--;
+				}
 
 
-			else {
-
-					int temp_counter = 0;
-					for(int i = in_counter; i<4; i++){
-						((uint8_t*)(&temp_buffer))[temp_counter] =  ((uint8_t*)(&data_buffer)) [i];
-						temp_counter++;
-					}
-					data_buffer = in_4B[in_4B_off + tid];
-					data_counter++;
-
-					while((data_counter * 4 > (((shared_col_len[block_flag * 32 + col_counter - 1] + 3)/4)*4)) && (col_counter > 1)){
-									col_counter--;
-					}
-
-					in_4B_off += col_counter;	
-					
-					for(int i = 0; i < in_counter; i++){
-						 ((uint8_t*)(&temp_buffer))[temp_counter] =  ((uint8_t*)(&data_buffer)) [i];
-						temp_counter++;
-					}
-				
-
-					used_bytes += 4;
-
-		    		head_byte = head_byte >> 1;
-					block++;
-					if(block == 9){
-						block = 0;
-					}
-
-
-
-				if(compress_flag == true){
-
-
+				if(c_flag == 0){
 					for(uint8_t k = 0; k < compress_counter; k++){	
 						out_4B[out_off] = temp_buffer;
 						out_off+=32;
 					}
 
-					compress_flag = false;
-
 				}
 				else{
 					out_4B[out_off] = temp_buffer;
 					out_off+=32;
-
 				}
-			}
-		
-		}
 
+				used_bytes+=4;
+				head_byte = head_byte >> 1;
+				block++;
+				if(block == 9){
+					block = 0;
+				}
+
+
+			}
+
+		}
 
 	}
 
@@ -862,7 +881,12 @@ namespace brle_trans {
     *out_n_bytes = out_bytes;
 
     printf("out_bytes: %llu\n", out_bytes);
+    printf("in_bytes: %llu\n", in_bytes);
 
+
+
+	// cuda_err_chk(cudaMalloc(&d_in, in_bytes));
+	// cuda_err_chk(cudaMalloc(&d_out, (*out_n_bytes)));
 
 	cuda_err_chk(cudaMalloc(&d_in, in_bytes));
 	cuda_err_chk(cudaMalloc(&d_out, (*out_n_bytes)));
@@ -882,8 +906,8 @@ namespace brle_trans {
     printf("num_blk: %llu, blk_size: %llu\n", num_blk, blk_size);
 
 
-    decompress_func<<<(num_blk/4), blk_size * 4>>> (d_in, d_out, num_blk, d_col_len, d_col_map, d_blk_offset);
-     // decompress_func<<<(num_blk), blk_size >>> (d_in, d_out, num_blk, d_col_len, d_col_map, d_blk_offset);
+    //decompress_func<<<(num_blk/4), blk_size * 4>>> (d_in, d_out, num_blk, d_col_len, d_col_map, d_blk_offset);
+    decompress_func<<<(num_blk), blk_size >>> (d_in, d_out, num_blk, d_col_len, d_col_map, d_blk_offset);
       cudaDeviceSynchronize();
        printf("decomp function done\n");
 
