@@ -140,7 +140,7 @@ namespace lzss {
 		uint8_t out_buffer_tail = 0;
 		uint64_t out_off = 0;
 
-		uint32_t* out_4B = (uint32_t*)(&(out[out_start_idx]));
+		uint32_t* out_4B = (uint32_t*)(&(out[out_start_idx + col_idx*4]));
 
 		uint8_t input_buffer[INPUT_BUFFER_SIZE];
 		uint8_t input_buffer_head = 0;
@@ -1767,7 +1767,7 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 
 
 	cuda_err_chk(cudaMalloc(&d_in, in_n_bytes));
-	cuda_err_chk(cudaMalloc(&d_out, (*out_n_bytes)));
+	cuda_err_chk(cudaMalloc(&d_out, (*out_n_bytes)*2));
 	//printf("out_bytes: %p\td_out: %p\tchunk_size: %llu\tn_chunks: %llu\tHIST_SIZE: %llu\tMIN_MATCH_LENGTH: %llu\tMAX_MATCH_LENGTH: %llu\tOFFSET_SIZE: %llu\tbitsNeeded(4096): %llu\n",
 	//out_bytes, d_out, chunk_size, n_chunks, hist_size, min_match_len, max_match_len, OFFSET_SIZE, bitsNeeded(HIST_SIZE));
 
