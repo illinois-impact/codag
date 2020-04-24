@@ -42,7 +42,7 @@ constexpr   uint32_t LOOKAHEAD_UNITS_() { return LOOKAHEAD_SIZE_()/READ_UNITS_()
 constexpr   uint64_t WARP_ID_(uint64_t t) { return t/32; }
 constexpr   uint32_t LOOKAHEAD_SIZE_4_BYTES_() { return  LOOKAHEAD_SIZE_()/sizeof(uint32_t); }
 constexpr   uint32_t HIST_SIZE_4_BYTES_() { return  HIST_SIZE_()/sizeof(uint32_t); }
-constexpr   uint32_t INPUT_BUFFER_SIZE() { return 8; }
+constexpr   uint32_t INPUT_BUFFER_SIZE() { return (8); }
 
 
 #define BLKS_SM                           BLKS_SM_()
@@ -65,7 +65,7 @@ constexpr   uint32_t INPUT_BUFFER_SIZE() { return 8; }
 #define READ_UNITS                        READ_UNITS_()
 #define LOOKAHEAD_UNITS                   LOOKAHEAD_UNITS_()
 #define WARP_ID(t)                        WARP_ID_(t)
-#define INPUT_BUFFER_SIZE                 INPUT_BUFFER_SIZE
+#define INPUT_BUFFER_SIZE                 INPUT_BUFFER_SIZE()
 
 namespace lzss {
     __host__ __device__ void find_match(const uint8_t* const  hist, const uint32_t hist_head, const uint32_t hist_count, const uint8_t* const lookahead, const uint32_t lookahead_head, const uint32_t lookahead_count, uint32_t* offset, uint32_t* length) {
@@ -119,7 +119,7 @@ namespace lzss {
 		uint64_t mychunk_size = col_len[blockDim.x * chunk_idx + tid];
 		uint64_t in_start_idx = blk_off[chunk_idx];
 
-		uint8_t head_byte = 0;
+		uint8_t header_byte = 0;
 		uint8_t block = 0;
 
 		uint64_t out_bytes = 0;
