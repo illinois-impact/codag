@@ -261,9 +261,11 @@ namespace lzss {
 
 			__syncwarp(mask);
 		}
+		/*
 		if (out_buffer_tail) {
 			out_4B[out_off] = out_buffer;
 		}
+		*/
 
 
     }
