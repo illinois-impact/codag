@@ -140,7 +140,7 @@ namespace lzss {
 		uint8_t out_buffer_tail = 0;
 		uint64_t out_off = 0;
 
-		uint32_t* out_4B = (uint32_t*)(&(out[out_start_idx + col_idx*4]));
+		uint32_t* out_4B = (uint32_t*)(&(out[out_start_idx]));
 
 		uint8_t input_buffer[INPUT_BUFFER_SIZE];
 		uint8_t input_buffer_head = 0;
@@ -261,11 +261,10 @@ namespace lzss {
 
 			__syncwarp(mask);
 		}
-		/*
+		
 		if (out_buffer_tail) {
 			out_4B[out_off] = out_buffer;
 		}
-		*/
 
 
     }
