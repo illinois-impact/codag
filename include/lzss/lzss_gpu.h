@@ -1776,7 +1776,7 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 
 
 	dim3 grid_size( n_chunks);
-	dim3 blk(BLK_SIZE,2);
+	dim3 blk(BLK_SIZE,1);
 	std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
         kernel_decompress<<<grid_size, blk>>>(d_in, d_out, in_n_bytes, out_size, CHUNK_SIZE, n_chunks, d_blk_off, d_col_len, d_col_map);
 	cuda_err_chk(cudaDeviceSynchronize());
