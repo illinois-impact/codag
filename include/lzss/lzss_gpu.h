@@ -42,7 +42,7 @@ constexpr   uint32_t LOOKAHEAD_UNITS_() { return LOOKAHEAD_SIZE_()/READ_UNITS_()
 constexpr   uint64_t WARP_ID_(uint64_t t) { return t/32; }
 constexpr   uint32_t LOOKAHEAD_SIZE_4_BYTES_() { return  LOOKAHEAD_SIZE_()/sizeof(uint32_t); }
 constexpr   uint32_t HIST_SIZE_4_BYTES_() { return  HIST_SIZE_()/sizeof(uint32_t); }
-
+constexpr   uint32_t INPUT_BUFFER_SIZE() { return 8; }
 
 
 #define BLKS_SM                           BLKS_SM_()
@@ -65,6 +65,7 @@ constexpr   uint32_t HIST_SIZE_4_BYTES_() { return  HIST_SIZE_()/sizeof(uint32_t
 #define READ_UNITS                        READ_UNITS_()
 #define LOOKAHEAD_UNITS                   LOOKAHEAD_UNITS_()
 #define WARP_ID(t)                        WARP_ID_(t)
+#define INPUT_BUFFER_SIZE                 INPUT_BUFFER_SIZE
 
 namespace lzss {
     __host__ __device__ void find_match(const uint8_t* const  hist, const uint32_t hist_head, const uint32_t hist_count, const uint8_t* const lookahead, const uint32_t lookahead_head, const uint32_t lookahead_count, uint32_t* offset, uint32_t* length) {
@@ -128,14 +129,16 @@ namespace lzss {
 		uint64_t col_idx = col_map[blockDim.x * chunk_idx + tid];
 
 		uint8_t v = 0;
-
+		uint32_t* in_4B = (uint32_t *)(&(in[in_start_idx]));
+		uint32_t in_4B_off = 0;
 
 
 		int data_counter = 0;
 
 		uint32_t out_buffer = 0;
-		uint8_t* out_buffer_8 = &out_buffer;
+		uint8_t* out_buffer_8 = (uint8_t*) &out_buffer;
 		uint8_t out_buffer_tail = 0;
+		uint64_t out_off = 0
 
 		uint32_t* out_4B = (uint32_t*)(&(out[out_start_idx + col_idx*4]));
 
@@ -196,7 +199,7 @@ namespace lzss {
 					uint32_t length = (type_0_v & LENGTH_MASK(LENGTH_SIZE)) + MIN_MATCH_LENGTH;
 					uint32_t offset = type_0_v >> LENGTH_SIZE;
 					uint32_t hist_tail = hist_head + hist_count;
-					uin32_t start_o = hist_tail - offset;
+					uint32_t start_o = hist_tail - offset;
 					for (size_t j = 0; j < length; j++) {
 						uint8_t val = hist[(start_o + j) % HIST_SIZE];
 						hist[(hist_tail + j) % HIST_SIZE] = val;
@@ -247,7 +250,7 @@ namespace lzss {
 						break;
 
 				}
-				if (used_bytes >= my_chunk_size)
+				if (used_bytes >= mychunk_size)
 					break;
 			}
 
@@ -1472,6 +1475,12 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	
     }
 
+	__global__ void
+    __launch_bounds__(32, 32)
+	kernel_decompress(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const blk_off, const uint64_t* const col_len, const uint8_t* const col_map) {
+	uint64_t tid = threadIdx.x + blockDim.x * blockIdx.x;
+	decompress_func_new(in, out, in_n_bytes, out_n_bytes, out_chunk_size, n_chunks, blk_off, col_len, col_map);
+    }
     __global__ void
     __launch_bounds__(32, 32)
     kernel_decompress(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const lens) {
