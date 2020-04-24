@@ -138,7 +138,7 @@ namespace lzss {
 		uint32_t out_buffer = 0;
 		uint8_t* out_buffer_8 = (uint8_t*) &out_buffer;
 		uint8_t out_buffer_tail = 0;
-		uint64_t out_off = 0
+		uint64_t out_off = 0;
 
 		uint32_t* out_4B = (uint32_t*)(&(out[out_start_idx + col_idx*4]));
 
