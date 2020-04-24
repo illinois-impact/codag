@@ -107,6 +107,163 @@ namespace lzss {
 
     }
 
+
+	__device__ void decompress_func_new(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const blk_off, const uint64_t* const col_len, const uint8_t* const col_map) {
+		uint8_t hist[HIST_SIZE] = {DEFAULT_CHAR};
+		uint64_t hist_head = 0;
+		uint64_t hist_count = 0;
+		int tid = threadIdx.x;
+		int chunk_idx = blockIdx.x;
+		uint64_t used_bytes = 0;
+		uint64_t mychunk_size = col_len[blockDim.x * chunk_idx + tid];
+		uint64_t in_start_idx = blk_off[chunk_idx];
+
+		uint8_t head_byte = 0;
+		uint8_t block = 0;
+
+		uint64_t out_bytes = 0;
+		uint64_t out_start_idx = chunk_idx * CHUNK_SIZE;
+
+		uint8_t compress_counter = 0;
+		uint64_t col_idx = col_map[blockDim.x * chunk_idx + tid];
+
+		uint8_t v = 0;
+
+
+
+		int data_counter = 0;
+
+		uint32_t out_buffer = 0;
+		uint8_t* out_buffer_8 = &out_buffer;
+		uint8_t out_buffer_tail = 0;
+
+		uint32_t* out_4B = (uint32_t*)(&(out[out_start_idx + col_idx*4]));
+
+		uint8_t input_buffer[INPUT_BUFFER_SIZE];
+		uint8_t input_buffer_head = 0;
+		uint8_t input_buffer_tail = 0;
+		uint8_t input_buffer_count = 0;
+		uint8_t input_buffer_read_count = 0;
+
+		bool stall_flag = false;
+		bool header_active = false;
+		uint8_t header_off = 0;
+		bool type = 0;
+		uint32_t type_0_byte = 0;
+		uint64_t type_0_v = 0;
+		while (used_bytes < mychunk_size) {
+			unsigned mask = __activemask();
+			int res = __popc(mask);
+
+			//read data
+			uint32_t* input_buffer_4B = (uint32_t *)(&(input_buffer[input_buffer_tail]));
+			input_buffer_4B[0] = in_4B[in_4B_off + tid];
+			input_buffer_tail = (input_buffer_tail + 4) % INPUT_BUFFER_SIZE;
+			input_buffer_count += 4;
+
+
+			in_4B_off += res;
+
+			if (!header_active) {
+				header_byte = input_buffer[input_buffer_head];
+				input_buffer_head = (input_buffer_head + 1) % INPUT_BUFFER_SIZE;
+				input_buffer_count--;
+				used_bytes++;
+				header_off = 0;
+				header_active = true;
+			}
+
+			for (; header_off < 8; header_off++) {
+				type = header_byte & 0x01;
+
+				if (type == 0) {
+					uint32_t n_b = MIN_MATCH_LENGTH - 1;
+
+					for (; type_0_byte < n_b; type_0_byte++) {
+						if (input_buffer_count) {
+							uint64_t k = ((uint64_t)input_buffer[(input_buffer_head)]) << (type_0_byte*8);
+							input_buffer_head = (input_buffer_head + 1) % INPUT_BUFFER_SIZE;
+							input_buffer_count--;
+							type_0_v |= k;
+							used_bytes++;
+						}
+						else
+							break;
+					}
+
+					if (type_0_byte < n_b)
+						break;
+					uint32_t length = (type_0_v & LENGTH_MASK(LENGTH_SIZE)) + MIN_MATCH_LENGTH;
+					uint32_t offset = type_0_v >> LENGTH_SIZE;
+					uint32_t hist_tail = hist_head + hist_count;
+					uin32_t start_o = hist_tail - offset;
+					for (size_t j = 0; j < length; j++) {
+						uint8_t val = hist[(start_o + j) % HIST_SIZE];
+						hist[(hist_tail + j) % HIST_SIZE] = val;
+						out_buffer_8[out_buffer_tail++] = val;
+						if (out_buffer_tail == 4) {
+							out_4B[out_off] = out_buffer;
+							out_buffer = 0;
+							out_off+=32;
+
+							out_buffer_tail = 0;
+						}
+					}
+					hist_count += length;
+					if (hist_count > HIST_SIZE) {
+						hist_head = (hist_head + (hist_count-HIST_SIZE)) % HIST_SIZE;
+						hist_count = HIST_SIZE;
+					}
+
+					type_0_v = 0;
+					type_0_byte = 0;
+					header_byte >>= 1;
+
+				}
+				else {
+					if (input_buffer_count) {
+						uint8_t val = input_buffer[(input_buffer_head)];
+						input_buffer_head = (input_buffer_head + 1) % INPUT_BUFFER_SIZE;
+						input_buffer_count--;
+						used_bytes++;
+						out_buffer_8[out_buffer_tail++] = val;
+						if (out_buffer_tail == 4) {
+							out_4B[out_off] = out_buffer;
+							out_buffer = 0;
+							out_off+=32;
+
+							out_buffer_tail = 0;
+						}
+						hist[(hist_head+hist_count)%HIST_SIZE] = val;
+						hist_count += 1;
+						if (hist_count > HIST_SIZE) {
+							hist_head = (hist_head + (1)) % HIST_SIZE;
+							hist_count = HIST_SIZE;
+						}
+
+						header_byte >>= 1;
+					}
+					else
+						break;
+
+				}
+				if (used_bytes >= my_chunk_size)
+					break;
+			}
+
+			if (header_off == 8)
+				header_active = false;
+
+
+
+			__syncwarp(mask);
+		}
+		if (out_buffer_tail) {
+			out_4B[out_off] = out_buffer;
+		}
+
+
+    }
     __host__ __device__ void decompress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const lens, const uint64_t tid) {
 	if (tid < n_chunks) {
 	    //uint8_t out_[CHUNK_SIZE];
@@ -1498,16 +1655,92 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
     }
 
 
-    __host__ void decompress_gpu(const uint8_t* const in, uint8_t** out, const uint64_t in_n_bytes, uint64_t* out_n_bytes) {
+ __host__ void decompress_gpu(const uint8_t* const in, uint8_t** out, const uint64_t in_n_bytes, uint64_t* out_n_bytes) {
 	uint8_t* d_in;
 	uint8_t* d_out;
 	uint64_t* d_lens;
 
 	const uint64_t* const in_64 = (const uint64_t*) in;
 
-	*out_n_bytes = in_64[0];
+
+	int blk_off_fd;
+	struct stat blk_off_sb;
+	uint64_t* blk_off;
+	if((blk_off_fd = open("blk_offset.bin", O_RDONLY)) == 0) {
+	    printf("Fatal Error: blk_offset File open error\n");
+	    //return -1;
+	}
+
+	fstat(blk_off_fd, &blk_off_sb);
+
+	blk_off = (uint64_t*) mmap(nullptr, blk_off_sb.st_size, PROT_READ, MAP_PRIVATE, blk_off_fd, 0);
+
+	if(blk_off == (void*)-1){
+	    printf("Fatal Error: blk_offset Mapping error\n");
+	    //return -1;
+	}
+
+	int col_len_fd;
+	struct stat col_len_sb;
+	uint64_t* col_len;
+	if((col_len_fd = open("col_len.bin", O_RDONLY)) == 0) {
+	    printf("Fatal Error: col_len File open error\n");
+	    //return -1;
+	}
+
+	fstat(col_len_fd, &col_len_sb);
+
+	col_len = (uint64_t*)mmap(nullptr, col_len_sb.st_size, PROT_READ, MAP_PRIVATE, col_len_fd, 0);
+
+	if(col_len == (void*)-1){
+	    printf("Fatal Error: col_len Mapping error\n");
+	    //return -1;
+	}
+
+	int col_map_fd;
+	struct stat col_map_sb;
+	uint8_t* col_map;
+	if((col_map_fd = open("col_map.bin", O_RDONLY)) == 0) {
+	    printf("Fatal Error: col_map File open error\n");
+	    //return -1;
+	}
+
+	fstat(col_map_fd, &col_map_sb);
+
+	col_map = (uint8_t*)mmap(nullptr, col_map_sb.st_size, PROT_READ, MAP_PRIVATE, col_map_fd, 0);
+
+	if(col_map == (void*)-1){
+	    printf("Fatal Error: col_map Mapping error\n");
+	    //return -1;
+	}
+
+	uint64_t n_chunks = (blk_off_sb.st_size/sizeof(uint64_t)) - 1;
+	uint64_t out_size = n_chunks * CHUNK_SIZE;
+
+
+	uint64_t* d_blk_off;
+	cuda_err_chk(cudaMalloc(&d_blk_off, blk_off_sb.st_size));
+
+	uint64_t* d_col_len;
+	cuda_err_chk(cudaMalloc(&d_col_len, col_len_sb.st_size));
+
+	uint8_t* d_col_map;
+	cuda_err_chk(cudaMalloc(&d_col_map, col_map_sb.st_size));
+
+
+	cuda_err_chk(cudaMemcpy(d_blk_off, blk_off, blk_off_sb.st_size, cudaMemcpyHostToDevice));
+
+	cuda_err_chk(cudaMemcpy(d_col_len, col_len, col_len_sb.st_size, cudaMemcpyHostToDevice));
+
+	cuda_err_chk(cudaMemcpy(d_col_map, col_map, col_map_sb.st_size, cudaMemcpyHostToDevice));
+
+
+
+
+	*out_n_bytes = out_size;
 	uint64_t out_bytes = *out_n_bytes;
 
+	/*
 	const uint32_t* const in_32 = (const uint32_t*) (in + sizeof(uint64_t));
 	uint32_t chunk_size = in_32[0];
 	uint32_t n_chunks = in_32[1];
@@ -1515,51 +1748,45 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	uint32_t min_match_len = in_32[3];
 	uint32_t max_match_len = in_32[4];
 
-	
+
 	uint64_t len_bytes =  (n_chunks*sizeof(uint64_t));
 	uint64_t head_bytes = HEAD_INTS*sizeof(uint32_t);
+	*/
 	//const uint64_t* const lens = (const uint64_t*) (in + head_bytes);
-	const uint8_t* const in_ = in + head_bytes + len_bytes;
-	uint64_t padded_in_n_bytes = in_n_bytes - (head_bytes + len_bytes);// + (chunk_size-(in_n_bytes % chunk_size));
-	printf("first byte: %p\n", in_[0]);
-	
+	const uint8_t* const in_ = in ;
 
-	cuda_err_chk(cudaMalloc(&d_in, padded_in_n_bytes));
-	cuda_err_chk(cudaMalloc(&d_lens, n_chunks * sizeof(uint64_t)));
+
+	cuda_err_chk(cudaMalloc(&d_in, in_n_bytes));
 	cuda_err_chk(cudaMalloc(&d_out, (*out_n_bytes)));
-	printf("out_bytes: %p\td_out: %p\tchunk_size: %llu\tn_chunks: %llu\tHIST_SIZE: %llu\tMIN_MATCH_LENGTH: %llu\tMAX_MATCH_LENGTH: %llu\tOFFSET_SIZE: %llu\tbitsNeeded(4096): %llu\n",
-	       out_bytes, d_out, chunk_size, n_chunks, hist_size, min_match_len, max_match_len, OFFSET_SIZE, bitsNeeded(HIST_SIZE));
+	//printf("out_bytes: %p\td_out: %p\tchunk_size: %llu\tn_chunks: %llu\tHIST_SIZE: %llu\tMIN_MATCH_LENGTH: %llu\tMAX_MATCH_LENGTH: %llu\tOFFSET_SIZE: %llu\tbitsNeeded(4096): %llu\n",
+	//out_bytes, d_out, chunk_size, n_chunks, hist_size, min_match_len, max_match_len, OFFSET_SIZE, bitsNeeded(HIST_SIZE));
 
 	//return;
-	
-	cuda_err_chk(cudaMemcpy(d_in, in_, padded_in_n_bytes, cudaMemcpyHostToDevice));
-	
-	cuda_err_chk(cudaMemcpy(d_lens, in+head_bytes, len_bytes, cudaMemcpyHostToDevice));
-	uint64_t grid_size = ceil<uint64_t>(n_chunks, BLK_SIZE);
-        kernel_decompress<<<grid_size, BLK_SIZE>>>(d_in, d_out, padded_in_n_bytes, out_bytes, chunk_size, n_chunks, d_lens);
-	cuda_err_chk(cudaDeviceSynchronize());
-	
 
+	cuda_err_chk(cudaMemcpy(d_in, in_, in_n_bytes, cudaMemcpyHostToDevice));
+
+
+	dim3 grid_size( n_chunks);
+	dim3 blk(BLK_SIZE,2);
+	std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
+        kernel_decompress<<<grid_size, blk>>>(d_in, d_out, in_n_bytes, out_size, CHUNK_SIZE, n_chunks, d_blk_off, d_col_len, d_col_map);
+	cuda_err_chk(cudaDeviceSynchronize());
+	std::chrono::high_resolution_clock::time_point kernel_end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> total = std::chrono::duration_cast<std::chrono::duration<double>>(kernel_end - kernel_start);
+	std::cout << "kernel time: " << total.count() << " secs\n";
 	printf("in bytes: %llu\n", in_n_bytes);
 
 	*out = new uint8_t[out_bytes];
-	uint32_t* out_32 = (uint32_t*) *out;
-//	out_32[0] = HEAD_INTS ;
-//	out_32[1] = chunk_size;
-//	out_32[2] = n_chunks;
-//	out_32[3] = HIST_SIZE;
-//	out_32[4] = MIN_MATCH_LENGTH;
-//	out_32[5] = MAX_MATCH_LENGTH;
-	
-
 	cuda_err_chk(cudaMemcpy((*out), d_out, out_bytes, cudaMemcpyDeviceToHost));
 	printf("bytes: %llu\n",*out_n_bytes );
 
 
 	cuda_err_chk(cudaFree(d_out));
 	cuda_err_chk(cudaFree(d_in));
-	cuda_err_chk(cudaFree(d_lens));
-	
+
     }
+
+
+
 
 }
