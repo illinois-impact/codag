@@ -23,7 +23,7 @@ constexpr   uint16_t BLK_SIZE_() { return (32); }
 constexpr   uint16_t BLKS_SM_()  { return (THRDS_SM_()/BLK_SIZE_()); }
 constexpr   uint64_t GRID_SIZE_() { return (1024); }
 constexpr   uint64_t NUM_CHUNKS_() { return (GRID_SIZE_()*BLK_SIZE_()); }
-constexpr   uint64_t CHUNK_SIZE_() { return (1024); }
+constexpr   uint64_t CHUNK_SIZE_() { return (4*1024*2); }
 constexpr   uint64_t INPUT_BUFFER_SIZE() { return (8); }
 
 
