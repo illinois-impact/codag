@@ -22,7 +22,7 @@ constexpr   uint16_t BLK_SIZE_() { return (32); }
 constexpr   uint16_t BLKS_SM_()  { return (THRDS_SM_()/BLK_SIZE_()); }
 constexpr   uint64_t GRID_SIZE_() { return (1024); }
 constexpr   uint64_t NUM_CHUNKS_() { return (GRID_SIZE_()*BLK_SIZE_()); }
-constexpr   uint64_t CHUNK_SIZE_() { return (1024); }
+constexpr   uint64_t CHUNK_SIZE_() { return (1024*4*32); }
 constexpr   uint64_t HEADER_SIZE_() { return (1); }
 constexpr   uint32_t OVERHEAD_PER_CHUNK_(uint32_t d) { return (ceil<uint32_t>(d,(HEADER_SIZE_()*8))+1); } 
 constexpr   uint32_t HIST_SIZE_() { return 2048; }
@@ -41,7 +41,7 @@ constexpr   uint32_t LOOKAHEAD_UNITS_() { return LOOKAHEAD_SIZE_()/READ_UNITS_()
 constexpr   uint64_t WARP_ID_(uint64_t t) { return t/32; }
 constexpr   uint32_t LOOKAHEAD_SIZE_4_BYTES_() { return  LOOKAHEAD_SIZE_()/sizeof(uint32_t); }
 constexpr   uint32_t HIST_SIZE_4_BYTES_() { return  HIST_SIZE_()/sizeof(uint32_t); }
-constexpr   uint32_t INPUT_BUFFER_SIZE() { return (8); }
+constexpr   uint32_t INPUT_BUFFER_SIZE() { return (32); }
 
 
 #define BLKS_SM                           BLKS_SM_()
@@ -166,6 +166,7 @@ namespace lzss {
 			unsigned mask = __activemask();
 			//int res = __popc(mask);
 			bool read = read_count < mychunk_size;
+			//unsigned mask2 = __activemask();
 			int res = __popc(__ballot_sync(mask, (read)));
 			if (read) {
 
@@ -302,19 +303,19 @@ namespace lzss {
 				break;
 			}
 		}
+
 		
-		//overwriting the data
-		//if (out_buffer_tail) {
-			//out_4B[out_off] = out_buffer;
-			
-		//}
-		if (out_buffer_tail) {
+		if (out_buffer_tail < 3) {
+			//printf("out_buf_tail: %llu\n", (unsigned long long) out_buffer_tail);
+
 			uint8_t* out_B = (uint8_t*)(out_4B + out_off);
 
 			for (size_t i = 0; i < out_buffer_tail; i++) {
 				out_B[i] = out_buffer_8[i];
 			}
+			
 		}
+
 
 
     }
