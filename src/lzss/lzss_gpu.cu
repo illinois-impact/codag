@@ -1,5 +1,5 @@
 #include <common.h>
-#include <lzss/lzss_gpu.h>
+#include <lzss/lzss_gpu2.h>
 #include <unistd.h>
 #include <iostream>
 #include <cstring>

@@ -153,7 +153,7 @@ namespace lzss {
 		bool type = 0;
 		uint32_t type_0_byte = 0;
 		uint64_t type_0_v = 0;
-
+		uint64_t read_count = 0;
 
 		int debug_counter = 0;
 
@@ -162,32 +162,36 @@ namespace lzss {
 		// }
 
 
-		while (used_bytes < mychunk_size) {
+		while (true) {
 			unsigned mask = __activemask();
-			int res = __popc(mask);
+			//int res = __popc(mask);
+			bool read = read_count < mychunk_size;
+			int res = __popc(__ballot_sync(mask, (read)));
+			if (read) {
 
-			//read data
-			uint32_t* input_buffer_4B = (uint32_t *)(&(input_buffer[input_buffer_tail]));
-			uint32_t read_data2 = in_4B[in_4B_off + tid];
-			input_buffer_4B[0] = read_data2;
+				//read data
+				uint32_t* input_buffer_4B = (uint32_t *)(&(input_buffer[input_buffer_tail]));
+				uint32_t read_data2 = in_4B[in_4B_off + tid];
+				input_buffer_4B[0] = read_data2;
 
-			if(tid == 0 && chunk_idx == 1){
-				printf("data: %x\n",read_data2);
-			}
+				if(tid == 0 && chunk_idx == 1){
+					printf("data: %x\n",read_data2);
+				}
 
 
-			input_buffer_tail = (input_buffer_tail + 4) % INPUT_BUFFER_SIZE;
-			input_buffer_count += 4;
+				input_buffer_tail = (input_buffer_tail + 4) % INPUT_BUFFER_SIZE;
+				input_buffer_count += 4;
+				read_count += 4;
 
 		
-			in_4B_off += res;
+				in_4B_off += res;
 
 
-			if(tid == 0 && chunk_idx ==1){
-			 	printf("res: %i \n", res);
-			 }
+				if(tid == 0 && chunk_idx ==1){
+					printf("res: %i \n", res);
+				}
 
-
+			}
 			if (!header_active) {
 				header_byte = input_buffer[input_buffer_head];
 				input_buffer_head = (input_buffer_head + 1) % INPUT_BUFFER_SIZE;
@@ -293,6 +297,10 @@ namespace lzss {
 
 
 			__syncwarp(mask);
+
+			if ((used_bytes >= mychunk_size)) {
+				break;
+			}
 		}
 		
 		//overwriting the data
@@ -300,6 +308,13 @@ namespace lzss {
 			//out_4B[out_off] = out_buffer;
 			
 		//}
+		if (out_buffer_tail) {
+			uint8_t* out_B = (uint8_t*)(out_4B + out_off);
+
+			for (size_t i = 0; i < out_buffer_tail; i++) {
+				out_B[i] = out_buffer_8[i];
+			}
+		}
 
 
     }
