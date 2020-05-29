@@ -163,7 +163,7 @@ namespace rlev2 {
     void preparePatchedBlob1(encode_info& info, patch_blob& pb) {
         // mask will be max value beyond which patch will be generated
         int64_t mask = static_cast<int64_t>(static_cast<uint64_t>(1) << pb.bits95p) - 1;
-        pb.patch_len = static_cast<uint32_t>(std::ceil((info.num_literals / 20)));
+        pb.patch_len = ceil(info.num_literals, static_cast<uint32_t>(20));
         pb.patch_width = get_closest_bit(pb.bits100p - pb.bits95p);
 
 
@@ -266,14 +266,14 @@ namespace rlev2 {
             const int64_t l0 = literals[i - 1];
             currDelta = l1 - l0;
             literal_min = min(literal_min, l1);
-            literal_max = std::max(literal_max, l1);
+            literal_max = max(literal_max, l1);
 
             isIncreasing &= (l0 <= l1);
             isDecreasing &= (l0 >= l1);
 
             info.is_fixed_delta &= (currDelta == initialDelta);
-            deltas[i - 1] = std::abs(currDelta);
-            max_delta = std::max(max_delta, deltas[i - 1]);
+            deltas[i - 1] = abs(currDelta);
+            max_delta = max(max_delta, deltas[i - 1]);
         }
         deltas[0] = literals[1] - literals[0]; // Initial
 

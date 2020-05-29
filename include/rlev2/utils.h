@@ -89,4 +89,21 @@ min(const _Tp& __a, const _Tp& __b)
     return (__a < __b) ? __a : __b;
 }
 
+template<typename _Tp>
+__host__ __device__
+inline const _Tp&
+max(const _Tp& __a, const _Tp& __b)
+{
+    return (__a > __b) ? __a : __b;
+}
+
+template<typename _Tp>
+__host__ __device__
+inline const _Tp
+abs(const _Tp& __x)
+{
+    return (__x > 0) ? __x : -__x;
+}
+
+
 #endif
