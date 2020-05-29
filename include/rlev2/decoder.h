@@ -1,6 +1,8 @@
 #ifndef _RLEV2_DECODER_H_
 #define _RLEV2_DECODER_H_
 
+#include <common.h>
+
 #include "utils.h"
 
 namespace rlev2 {
@@ -166,34 +168,73 @@ namespace rlev2 {
         return consumed;
     }
 
-    __host__ __device__ void block_decode(const uint64_t tid, uint8_t* in, uint64_t* offsets, int64_t* out) {
+    __host__ __device__ void block_decode(const uint64_t tid, uint8_t* in, const uint64_t* offsets, int64_t* out) {
         uint32_t consumed = 0;
 
+        auto curr_out = out + tid * CHUNK_SIZE;
+        uint8_t* curr_in = in + offsets[tid];
         const uint32_t my_chunk_size = static_cast<uint32_t>(offsets[tid + 1] - offsets[tid]);
 
         // printf("chunk size: %u\n", my_chunk_size);
         while (consumed < my_chunk_size) {
-            const auto first = read_byte(in);
+            const auto first = read_byte(curr_in);
 
             const auto encoding = static_cast<uint8_t>(first & 0xC0); // 0bxx000000
             switch(encoding) {
             case HEADER_SHORT_REPEAT:
-                consumed += decode_short_repeat(in, first, out);
+                consumed += decode_short_repeat(curr_in, first, curr_out);
                 break;
             case HEADER_DIRECT:
-                consumed += decode_direct(in, first, out);
+                consumed += decode_direct(curr_in, first, curr_out);
                 break;
             case HEADER_PACTED_BASE:
-                consumed += decode_patched_base(in, first, out);
+                consumed += decode_patched_base(curr_in, first, curr_out);
                 break;
             case HEADER_DELTA:  
-                consumed += decode_delta(in, first, out);
+                consumed += decode_delta(curr_in, first, curr_out);
                 break;
             }
 
             // printf("consumed: %u\n", consumed);
 
         }
+    }
+
+    __global__ void kernel_decompress(uint8_t* in, const uint64_t *ptr, const uint32_t n_chunks, int64_t* out) {
+        uint64_t tid = blockDim.x * blockIdx.x + threadIdx.x;
+        if (tid < n_chunks) block_decode(tid, in, ptr, out);
+    }
+
+    __host__ void decompress_gpu(const uint8_t* in, const uint64_t in_n_bytes, int64_t*& out, uint64_t& out_n_bytes) {
+        uint8_t *d_in;
+        int64_t *d_out;
+        uint64_t *d_ptr;
+        
+        uint32_t n_ptr = *((uint32_t*)in);
+        const uint64_t header_bytes = sizeof(uint32_t) + sizeof(uint64_t) * n_ptr + sizeof(uint64_t);
+        const uint64_t data_bytes = in_n_bytes - header_bytes;
+        const uint64_t raw_data_bytes = *((uint64_t*)(in + header_bytes - sizeof(uint64_t)));
+
+        cuda_err_chk(cudaMalloc((void**)&d_in, data_bytes));
+        cuda_err_chk(cudaMalloc((void**)&d_ptr, sizeof(uint64_t) * n_ptr));
+        cuda_err_chk(cudaMalloc((void**)&d_out, raw_data_bytes));
+
+        cuda_err_chk(cudaMemcpy(d_in, in + header_bytes, data_bytes, cudaMemcpyHostToDevice));
+        cuda_err_chk(cudaMemcpy(d_ptr, in + sizeof(uint32_t), sizeof(uint64_t) * n_ptr, cudaMemcpyHostToDevice));
+
+        uint64_t grid_size = ceil<uint64_t>(n_ptr - 1, BLK_SIZE);
+        kernel_decompress<<<grid_size, BLK_SIZE>>>(d_in, d_ptr, n_ptr - 1, d_out);
+
+	    cuda_err_chk(cudaDeviceSynchronize());
+
+        out = new int64_t[raw_data_bytes / sizeof(int64_t)];
+	    cuda_err_chk(cudaMemcpy(out, d_out, raw_data_bytes, cudaMemcpyDeviceToHost));
+
+        cuda_err_chk(cudaFree(d_in));
+        cuda_err_chk(cudaFree(d_out));
+        cuda_err_chk(cudaFree(d_ptr));
+
+        out_n_bytes = raw_data_bytes;
     }
 
 }

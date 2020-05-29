@@ -17,15 +17,19 @@ void test(int64_t ll[], uint8_t exp[], int64_t in_n_bytes, int64_t out_exp_bytes
         assert(exp[i] == out[base + i]);
     }
 
-    int64_t data[n_digits];
-    uint64_t* ptr = (uint64_t* )(out + sizeof(uint32_t));
-    rlev2::block_decode(0, out + base, ptr, data);
+    int64_t *decoded;
+    uint64_t decode_bytes;
+    rlev2::decompress_gpu(out, out_size, decoded, decode_bytes);
+
+    // printf("encoded: %lu\n", in_n_bytes);
+    // printf("decoded: %lu\n", decode_bytes);
 
     for (int i=0; i<n_digits; ++i) {
-        // printf("out[%d]: %ld\n", i, data[i]);
-        assert(data[i] == ll[i]);
+        // printf("out[%d]: %ld\n", i, decoded[i]);
+        assert(decoded[i] == ll[i]);
     }
     delete[] out;
+    delete[] decoded;
 }
 
 void test_PB() {

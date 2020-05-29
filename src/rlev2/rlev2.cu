@@ -1,14 +1,15 @@
 #include <common.h>
-#include <rlev2/rlev2.h>
 #include <unistd.h>
 #include <iostream>
 #include <cstring>
 #include <sys/types.h> 
-
 #include <sys/stat.h> 
 #include <fcntl.h>
 #include <sys/mman.h>
+
 #include <chrono>
+
+#include <rlev2/rlev2.h>
 
 int main(int argc, char** argv) {
     if (argc < 3) {
@@ -53,15 +54,19 @@ int main(int argc, char** argv) {
         printf("Fatal Error: INPUT Mapping error\n");
         return -1;
     }
-    int64_t* in_ = (int64_t*) in;
-    uint8_t* out_;
+    
+    void *out_;
     uint64_t out_size;
     std::chrono::high_resolution_clock::time_point compress_start = std::chrono::high_resolution_clock::now();
     if (!decomp) {
-        rlev2::compress_gpu(in_, in_sb.st_size, out_, out_size);
+        uint8_t *t_out;
+        rlev2::compress_gpu((int64_t*)in, in_sb.st_size, t_out, out_size);
+        out_ = t_out;
     }
     else {
-        // brle::decompress_gpu(in_, &out_, in_sb.st_size, &out_size);
+        int64_t *t_out;
+        rlev2::decompress_gpu((uint8_t*)in, in_sb.st_size, t_out, out_size);
+        out_ = t_out;
     }
 
     std::chrono::high_resolution_clock::time_point compress_end = std::chrono::high_resolution_clock::now();

@@ -663,7 +663,7 @@ namespace rlev2 {
 
         const uint64_t grid_size = ceil<uint64_t>(n_chunks, BLK_SIZE);
         
-        // printf("chunks: %u\n", n_chunks);
+        printf("chunks: %u\n", n_chunks);
 
         kernel_encode<<<grid_size, BLK_SIZE>>>(d_in, in_n_bytes, n_chunks, d_out, d_ptr);
     	cuda_err_chk(cudaDeviceSynchronize());
