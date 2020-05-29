@@ -81,4 +81,12 @@ inline uint8_t get_closest_aligned_bit(const uint8_t bit) {
     return closest_aligned_bit_map[bit];
 }
 
+template<typename _Tp>
+__host__ __device__
+inline const _Tp&
+min(const _Tp& __a, const _Tp& __b)
+{
+    return (__a < __b) ? __a : __b;
+}
+
 #endif

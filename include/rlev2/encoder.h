@@ -147,7 +147,7 @@ namespace rlev2 {
 
     __host__ __device__
     uint8_t compute_percentile_bit_width(uint8_t* hist, uint32_t len, uint8_t p) {
-        p = std::min<uint8_t>(100 - p, 100);
+        p = min<uint8_t>(100 - p, 100);
         int32_t plen = (p == 0 ? 0 : (len * p - 1) / 100 + 1);
         for (auto i=HIST_LEN-1; i>=0; --i) {
             plen -= hist[i];
@@ -265,7 +265,7 @@ namespace rlev2 {
             const int64_t l1 = literals[i];
             const int64_t l0 = literals[i - 1];
             currDelta = l1 - l0;
-            literal_min = std::min(literal_min, l1);
+            literal_min = min(literal_min, l1);
             literal_max = std::max(literal_max, l1);
 
             isIncreasing &= (l0 <= l1);
@@ -529,9 +529,8 @@ namespace rlev2 {
         auto& var_runlen = info.var_runlen;
         int64_t *literals = info.literals;
 
-        uint64_t start = tid * CHUNK_SIZE;
-        uint64_t end = std::min(start + CHUNK_SIZE, in_n_bytes) / sizeof(int64_t);
-
+        const uint64_t start = tid * CHUNK_SIZE / sizeof(int64_t);
+        const uint64_t end = min((tid + 1) * CHUNK_SIZE, in_n_bytes) / sizeof(int64_t);
 
         for (auto i=start; i<end; ++i) {
             auto val = in[i];
@@ -660,15 +659,12 @@ namespace rlev2 {
         uint64_t *d_ptr;
         cuda_err_chk(cudaMalloc((void**)&d_ptr, sizeof(uint64_t) * (n_chunks + 1)));
 
-
         const uint64_t grid_size = ceil<uint64_t>(n_chunks, BLK_SIZE);
         
+        printf("grid: %lu, block: %lu\n", grid_size, BLK_SIZE);
         printf("chunks: %u\n", n_chunks);
 
         kernel_encode<<<grid_size, BLK_SIZE>>>(d_in, in_n_bytes, n_chunks, d_out, d_ptr);
-    	cuda_err_chk(cudaDeviceSynchronize());
-        
-
         thrust::inclusive_scan(thrust::device, d_ptr, d_ptr + n_chunks + 1, d_ptr);
 
         uint64_t data_n_bytes;
