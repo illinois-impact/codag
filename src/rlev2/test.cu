@@ -6,6 +6,7 @@
 void test(int64_t ll[], uint8_t exp[], int64_t in_n_bytes, int64_t out_exp_bytes) {
     uint8_t *out;
     uint64_t out_size;
+    const uint32_t n_digits = in_n_bytes/sizeof(int64_t);
 
     rlev2::compress_gpu(ll, in_n_bytes, out, out_size);
     uint16_t chunks = *((uint16_t*)out);
@@ -16,18 +17,14 @@ void test(int64_t ll[], uint8_t exp[], int64_t in_n_bytes, int64_t out_exp_bytes
         assert(exp[i] == out[base + i]);
     }
 
-    const uint32_t n_digits = in_n_bytes/sizeof(int64_t);
     int64_t data[n_digits];
     uint64_t* ptr = (uint64_t* )(out + sizeof(uint32_t));
     rlev2::block_decode(0, out + base, ptr, data);
 
     for (int i=0; i<n_digits; ++i) {
-        printf("out[%d]: %ld\n", i, data[i]);
+        // printf("out[%d]: %ld\n", i, data[i]);
+        assert(data[i] == ll[i]);
     }
-    // printf("out[i]: %ld\n", data[1]);
-    // printf("out[i]: %ld\n", data[2]);
-    // printf("out[i]: %ld\n", data[3]);
-    // printf("out[i]: %ld\n", data[4]);
     delete[] out;
 }
 
@@ -70,6 +67,6 @@ int main() {
     test_DELTA();
     test_SHORTREPEAT();
     test_DIRECT();
-    // test_PB();
+    test_PB();
     return 0;
 }

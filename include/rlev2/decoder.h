@@ -23,7 +23,7 @@ namespace rlev2 {
 
     __host__ __device__ uint32_t decode_short_repeat(uint8_t* &in, uint8_t first, int64_t* &out) {
         const uint8_t num_bytes = ((first >> 3) & 0x07) + 1;
-        const uint8_t count = first & 0x07 + MINIMUM_REPEAT;
+        const uint8_t count = (first & 0x07) + MINIMUM_REPEAT;
 
         const auto val = read_long(in, num_bytes);
 
@@ -99,7 +99,7 @@ namespace rlev2 {
 
         bool increasing = (base_delta > 0);
         if (fbw != 0) {
-            uint32_t consumed = readLongs(in, out, len, fbw);
+            uint32_t consumed = readLongs(in, out, len - 2, fbw);
             if (increasing) {
                 for (uint16_t i=0; i<len; ++i) {
                     base_val = curr[i] += base_val;
@@ -127,11 +127,51 @@ namespace rlev2 {
         return 2 + readLongs(in, out, len, fbw);
     }
 
+    __host__ __device__ uint32_t decode_patched_base(uint8_t* &in, uint8_t first, int64_t* &out) {
+        const uint8_t encoded_fbw = (first >> 1) & 0x1f;
+        const uint8_t fbw = get_decoded_bit_width(encoded_fbw);
+        const uint16_t len = ((static_cast<uint16_t>(first & 0x01) << 8) | read_byte(in)) + 1;
+
+        const auto third = read_byte(in);
+        const auto forth = read_byte(in);
+
+        const uint8_t bw = ((third >> 5) & 0x07) + 1;
+        const uint8_t pw = get_decoded_bit_width(third & 0x1f);
+        const uint8_t pgw = ((forth >> 5) & 0x07) + 1;
+        const uint8_t pll = forth & 0x1f;
+
+        const auto base  = read_long(in, bw);
+
+        uint32_t consumed = 4 + 2; // 4 bytes header + 2 byte long
+
+        auto curr = out;
+        consumed += readLongs(in, out, len, fbw);
+
+        uint32_t cfb = get_closest_bit(pw + pgw);
+
+        // TODO Patched List should be no more than 10 percent of MAX_LIT_SIZE
+        int64_t patch_list[MAX_LITERAL_SIZE], *p_list = patch_list;
+        consumed += readLongs(in, p_list, pll, cfb);
+
+        const uint16_t patch_mask = (static_cast<uint16_t>(1) << pw) - 1; // get rid of patch gap
+        int gap_idx = 0;
+        for (uint8_t p=0; p<pll; ++p) {
+            gap_idx += patch_list[p] >> pw;
+            curr[gap_idx] |= static_cast<int64_t>(patch_list[p] & patch_mask) << fbw;
+        }
+
+        for (uint16_t i=0; i<len; ++i) {
+            curr[i] += base;
+        }
+        return consumed;
+    }
+
     __host__ __device__ void block_decode(const uint64_t tid, uint8_t* in, uint64_t* offsets, int64_t* out) {
         uint32_t consumed = 0;
 
         const uint32_t my_chunk_size = static_cast<uint32_t>(offsets[tid + 1] - offsets[tid]);
 
+        // printf("chunk size: %u\n", my_chunk_size);
         while (consumed < my_chunk_size) {
             const auto first = read_byte(in);
 
@@ -144,11 +184,15 @@ namespace rlev2 {
                 consumed += decode_direct(in, first, out);
                 break;
             case HEADER_PACTED_BASE:
+                consumed += decode_patched_base(in, first, out);
                 break;
             case HEADER_DELTA:  
                 consumed += decode_delta(in, first, out);
                 break;
             }
+
+            // printf("consumed: %u\n", consumed);
+
         }
     }
 
