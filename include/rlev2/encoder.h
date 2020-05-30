@@ -55,6 +55,9 @@ namespace rlev2 {
     // Only need 8 bit (255) to represent 64 bit varint
     __host__ __device__
     uint8_t find_closes_num_bits(int64_t value) {
+        if (value < 0) {
+            return get_closest_bit(64);
+        }
         uint8_t count = 0;
         while (value) {
             value = value >> 1;
@@ -147,9 +150,9 @@ namespace rlev2 {
 
     __host__ __device__
     uint8_t compute_percentile_bit_width(uint8_t* hist, uint32_t len, uint8_t p) {
-        p = min<uint8_t>(100 - p, 100);
+        p = min(100 - p, 100);
         int32_t plen = (p == 0 ? 0 : (len * p - 1) / 100 + 1);
-        for (auto i=HIST_LEN-1; i>=0; --i) {
+        for (int8_t i=HIST_LEN-1; i>=0; --i) {
             plen -= hist[i];
             if (plen < 0) {
                 return get_decoded_bit_width(static_cast<uint8_t>(i));
@@ -244,6 +247,7 @@ namespace rlev2 {
 
     __host__ __device__
     void determineEncoding(encode_info& info) {
+        // printf("determine encoding\n");
         int64_t* literals = info.literals;
         if (info.num_literals <= MINIMUM_REPEAT) {
             writeDirectValues(info);
@@ -277,6 +281,7 @@ namespace rlev2 {
         }
         deltas[0] = literals[1] - literals[0]; // Initial
 
+
         // it's faster to exit under delta overflow condition without checking for
         // PATCHED_BASE condition as encoding using DIRECT is faster and has less
         // overhead than PATCHED_BASE
@@ -290,6 +295,7 @@ namespace rlev2 {
             return;
         }
 
+
         if (initialDelta != 0) {
             info.delta_bits = find_closes_num_bits(max_delta);
 
@@ -298,6 +304,7 @@ namespace rlev2 {
                 return;
             }
         }
+
 
         uint8_t hist[HIST_LEN];
         compute_bit_width(info.literals, info.num_literals, hist);
@@ -339,6 +346,8 @@ namespace rlev2 {
             writeDirectValues(info);
             return;
         }
+
+        printf(" reach end of no return \n");
     }
 
     __host__ __device__
@@ -348,6 +357,7 @@ namespace rlev2 {
 
     __host__ __device__
     void writeShortRepeatValues(encode_info& info) {
+        printf("write short repeat\n");
         int64_t	val = info.literals[0];
 
         const uint8_t val_bits = find_closes_num_bits(val);
@@ -363,6 +373,7 @@ namespace rlev2 {
         }
 
         info.fix_runlen = 0;
+        info.num_literals = 0;
     }
 
     __host__ __device__
@@ -375,6 +386,8 @@ namespace rlev2 {
 
     __host__ __device__
     void writeDirectValues(encode_info& info) {
+        printf("write direct\n");
+
         // write the number of fixed bits required in next 5 bits
         uint8_t hist[HIST_LEN];
         compute_bit_width(info.literals, info.num_literals, hist);
@@ -389,6 +402,7 @@ namespace rlev2 {
 
         // reset run length
         info.var_runlen = 0;
+        info.num_literals = 0;
     }
 
     __host__ __device__ 
@@ -419,6 +433,8 @@ namespace rlev2 {
 
     __host__ __device__ 
     void writeDeltaValues(encode_info& info) {
+        printf("write delta\n");
+
         uint16_t len = 0;
         uint8_t encoded_width = 0;
         uint8_t num_bits = get_closest_aligned_bit(info.delta_bits);
@@ -451,10 +467,13 @@ namespace rlev2 {
         if (!info.is_fixed_delta) {
             write_aligned_ints(info.deltas + 1, info.num_literals - 2, num_bits, info);
         }
+        info.num_literals = 0;
     }
     
     __host__ __device__ 
     void writePatchedBasedValues(encode_info& info, patch_blob& pb) {
+        printf("write patched base\n");
+
         uint32_t& varlen = info.var_runlen;
         varlen -= 1;
         const uint8_t headerFirstByte = static_cast<uint8_t>(
@@ -509,6 +528,7 @@ namespace rlev2 {
 
         // reset run length
         info.var_runlen = 0;
+        info.num_literals = 0;
     }
 
     __global__ void kernel_encode(int64_t* in, const uint64_t in_n_bytes, const uint32_t n_chunks, uint8_t* out, uint64_t *offset) {
@@ -532,8 +552,11 @@ namespace rlev2 {
         const uint64_t start = tid * CHUNK_SIZE / sizeof(int64_t);
         const uint64_t end = min((tid + 1) * CHUNK_SIZE, in_n_bytes) / sizeof(int64_t);
 
+        printf("%lu: (%lu, %lu)\n", tid, start, end);
+
         for (auto i=start; i<end; ++i) {
             auto val = in[i];
+            // printf("%lu read %ld(%lu)\n", tid, val, i);
             if (num_literals == 0) {
                 literals[num_literals ++] = val;
                 continue;
@@ -616,6 +639,9 @@ namespace rlev2 {
 
 
         }
+
+        printf("finish reading\n");
+
         if (num_literals != 0) {
             if (info.var_runlen != 0) {
                 determineEncoding(info);
@@ -651,45 +677,48 @@ namespace rlev2 {
         uint32_t n_chunks = (in_n_bytes - 1) / CHUNK_SIZE + 1;
         int64_t* d_in;
         uint8_t *d_out, *d_shift;
-        cuda_err_chk(cudaMalloc((void**)&d_in, in_n_bytes));
-        cuda_err_chk(cudaMalloc((void**)&d_out, n_chunks * OUTPUT_CHUNK_SIZE));
+        cudaMalloc((void**)&d_in, in_n_bytes);
+        cudaMalloc((void**)&d_out, n_chunks * OUTPUT_CHUNK_SIZE);
 
         cudaMemcpy(d_in, in, in_n_bytes, cudaMemcpyHostToDevice);
 
         uint64_t *d_ptr;
-        cuda_err_chk(cudaMalloc((void**)&d_ptr, sizeof(uint64_t) * (n_chunks + 1)));
+        cudaMalloc((void**)&d_ptr, sizeof(uint64_t) * (n_chunks + 1));
 
         const uint64_t grid_size = ceil<uint64_t>(n_chunks, BLK_SIZE);
         
-        printf("grid: %lu, block: %lu\n", grid_size, BLK_SIZE);
         printf("chunks: %u\n", n_chunks);
 
+
         kernel_encode<<<grid_size, BLK_SIZE>>>(d_in, in_n_bytes, n_chunks, d_out, d_ptr);
+        cuda_err_chk(cudaDeviceSynchronize());
+
         thrust::inclusive_scan(thrust::device, d_ptr, d_ptr + n_chunks + 1, d_ptr);
 
         uint64_t data_n_bytes;
         cudaMemcpy(&data_n_bytes, d_ptr + n_chunks, sizeof(uint64_t), cudaMemcpyDeviceToHost);
         // printf("output bytes: %lu\n", data_n_bytes);
 
-        cuda_err_chk(cudaMalloc((void**)&d_shift, data_n_bytes * sizeof(uint8_t)));
+        cudaMalloc((void**)&d_shift, data_n_bytes * sizeof(uint8_t));
         kernel_shift_data<<<grid_size, BLK_SIZE>>>(d_out, d_shift, d_ptr, n_chunks);
-    	cuda_err_chk(cudaDeviceSynchronize());
+        cudaDeviceSynchronize();
+    	
 
         const uint64_t ptr_n_bytes = sizeof(uint64_t) * (n_chunks + 1);
 	    size_t exp_out_n_bytes = sizeof(uint32_t) + ptr_n_bytes + sizeof(uint64_t) + data_n_bytes;
 
         out = new uint8_t[exp_out_n_bytes];
         *(uint32_t*)out = (n_chunks + 1);
-        cuda_err_chk(cudaMemcpy(out + sizeof(uint32_t), d_ptr, ptr_n_bytes, cudaMemcpyDeviceToHost));
+        cudaMemcpy(out + sizeof(uint32_t), d_ptr, ptr_n_bytes, cudaMemcpyDeviceToHost);
         
         uint64_t* data_len = (uint64_t*)(out + sizeof(uint32_t) + ptr_n_bytes);
         *data_len = in_n_bytes;
-        cuda_err_chk(cudaMemcpy((uint8_t*)(data_len + 1), d_shift, data_n_bytes, cudaMemcpyDeviceToHost));
+        cudaMemcpy((uint8_t*)(data_len + 1), d_shift, data_n_bytes, cudaMemcpyDeviceToHost);
 
-        cuda_err_chk(cudaFree(d_shift));
-        cuda_err_chk(cudaFree(d_ptr));
-        cuda_err_chk(cudaFree(d_in));
-        cuda_err_chk(cudaFree(d_out));
+        cudaFree(d_shift);
+        cudaFree(d_ptr);
+        cudaFree(d_in);
+        cudaFree(d_out);
 
         out_n_bytes = exp_out_n_bytes;
     }

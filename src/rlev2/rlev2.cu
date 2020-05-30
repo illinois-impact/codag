@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
     }
     
     void *out_;
-    uint64_t out_size;
+    uint64_t out_size = 0;
     std::chrono::high_resolution_clock::time_point compress_start = std::chrono::high_resolution_clock::now();
     if (!decomp) {
         uint8_t *t_out;
