@@ -357,7 +357,7 @@ namespace rlev2 {
 
     __host__ __device__
     void writeShortRepeatValues(encode_info& info) {
-        printf("write short repeat\n");
+        // printf("write short repeat\n");
         int64_t	val = info.literals[0];
 
         const uint8_t val_bits = find_closes_num_bits(val);
@@ -386,7 +386,7 @@ namespace rlev2 {
 
     __host__ __device__
     void writeDirectValues(encode_info& info) {
-        printf("write direct\n");
+        // printf("write direct\n");
 
         // write the number of fixed bits required in next 5 bits
         uint8_t hist[HIST_LEN];
@@ -433,7 +433,7 @@ namespace rlev2 {
 
     __host__ __device__ 
     void writeDeltaValues(encode_info& info) {
-        printf("write delta\n");
+        // printf("write delta\n");
 
         uint16_t len = 0;
         uint8_t encoded_width = 0;
@@ -472,7 +472,7 @@ namespace rlev2 {
     
     __host__ __device__ 
     void writePatchedBasedValues(encode_info& info, patch_blob& pb) {
-        printf("write patched base\n");
+        // printf("write patched base\n");
 
         uint32_t& varlen = info.var_runlen;
         varlen -= 1;
@@ -552,7 +552,7 @@ namespace rlev2 {
         const uint64_t start = tid * CHUNK_SIZE / sizeof(int64_t);
         const uint64_t end = min((tid + 1) * CHUNK_SIZE, in_n_bytes) / sizeof(int64_t);
 
-        printf("%lu: (%lu, %lu)\n", tid, start, end);
+        // printf("%lu: (%lu, %lu)\n", tid, start, end);
 
         for (auto i=start; i<end; ++i) {
             auto val = in[i];
@@ -640,7 +640,7 @@ namespace rlev2 {
 
         }
 
-        printf("finish reading\n");
+        // printf("finish reading\n");
 
         if (num_literals != 0) {
             if (info.var_runlen != 0) {
@@ -660,6 +660,8 @@ namespace rlev2 {
             }
         }
         *offset = info.potision;
+
+        // printf("%lu: %u\n", tid, info.potision);
     }
 
     __host__ __device__ void shift_data(const uint8_t* in, uint8_t* out, const uint64_t* ptr, const uint64_t tid) {
@@ -677,18 +679,18 @@ namespace rlev2 {
         uint32_t n_chunks = (in_n_bytes - 1) / CHUNK_SIZE + 1;
         int64_t* d_in;
         uint8_t *d_out, *d_shift;
-        cudaMalloc((void**)&d_in, in_n_bytes);
-        cudaMalloc((void**)&d_out, n_chunks * OUTPUT_CHUNK_SIZE);
+        cuda_err_chk(cudaMalloc((void**)&d_in, in_n_bytes));
+        cuda_err_chk(cudaMalloc((void**)&d_out, n_chunks * OUTPUT_CHUNK_SIZE));
 
-        cudaMemcpy(d_in, in, in_n_bytes, cudaMemcpyHostToDevice);
+        cuda_err_chk(cudaMemcpy(d_in, in, in_n_bytes, cudaMemcpyHostToDevice));
 
         uint64_t *d_ptr;
-        cudaMalloc((void**)&d_ptr, sizeof(uint64_t) * (n_chunks + 1));
+        cuda_err_chk(cudaMalloc((void**)&d_ptr, sizeof(uint64_t) * (n_chunks + 1)));
 
         const uint64_t grid_size = ceil<uint64_t>(n_chunks, BLK_SIZE);
         
-        printf("chunks: %u\n", n_chunks);
-
+        // printf("chunks: %u\n", n_chunks);
+        // printf("output chunk size: %lu\n", OUTPUT_CHUNK_SIZE);
 
         kernel_encode<<<grid_size, BLK_SIZE>>>(d_in, in_n_bytes, n_chunks, d_out, d_ptr);
         cuda_err_chk(cudaDeviceSynchronize());
@@ -696,12 +698,12 @@ namespace rlev2 {
         thrust::inclusive_scan(thrust::device, d_ptr, d_ptr + n_chunks + 1, d_ptr);
 
         uint64_t data_n_bytes;
-        cudaMemcpy(&data_n_bytes, d_ptr + n_chunks, sizeof(uint64_t), cudaMemcpyDeviceToHost);
+        cuda_err_chk(cudaMemcpy(&data_n_bytes, d_ptr + n_chunks, sizeof(uint64_t), cudaMemcpyDeviceToHost));
         // printf("output bytes: %lu\n", data_n_bytes);
 
         cudaMalloc((void**)&d_shift, data_n_bytes * sizeof(uint8_t));
         kernel_shift_data<<<grid_size, BLK_SIZE>>>(d_out, d_shift, d_ptr, n_chunks);
-        cudaDeviceSynchronize();
+        cuda_err_chk(cudaDeviceSynchronize());
     	
 
         const uint64_t ptr_n_bytes = sizeof(uint64_t) * (n_chunks + 1);
@@ -709,16 +711,16 @@ namespace rlev2 {
 
         out = new uint8_t[exp_out_n_bytes];
         *(uint32_t*)out = (n_chunks + 1);
-        cudaMemcpy(out + sizeof(uint32_t), d_ptr, ptr_n_bytes, cudaMemcpyDeviceToHost);
+        cuda_err_chk(cudaMemcpy(out + sizeof(uint32_t), d_ptr, ptr_n_bytes, cudaMemcpyDeviceToHost));
         
         uint64_t* data_len = (uint64_t*)(out + sizeof(uint32_t) + ptr_n_bytes);
         *data_len = in_n_bytes;
-        cudaMemcpy((uint8_t*)(data_len + 1), d_shift, data_n_bytes, cudaMemcpyDeviceToHost);
+        cuda_err_chk(cudaMemcpy((uint8_t*)(data_len + 1), d_shift, data_n_bytes, cudaMemcpyDeviceToHost));
 
-        cudaFree(d_shift);
-        cudaFree(d_ptr);
-        cudaFree(d_in);
-        cudaFree(d_out);
+        cuda_err_chk(cudaFree(d_shift));
+        cuda_err_chk(cudaFree(d_ptr));
+        cuda_err_chk(cudaFree(d_in));
+        cuda_err_chk(cudaFree(d_out));
 
         out_n_bytes = exp_out_n_bytes;
     }

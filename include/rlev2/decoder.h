@@ -171,11 +171,11 @@ namespace rlev2 {
     __host__ __device__ void block_decode(const uint64_t tid, uint8_t* in, const uint64_t* offsets, int64_t* out) {
         uint32_t consumed = 0;
 
-        auto curr_out = out + tid * CHUNK_SIZE;
+        auto curr_out = (int64_t*)((uint8_t*)out + tid * CHUNK_SIZE);
         uint8_t* curr_in = in + offsets[tid];
         const uint32_t my_chunk_size = static_cast<uint32_t>(offsets[tid + 1] - offsets[tid]);
 
-        // printf("chunk size: %u\n", my_chunk_size);
+        // printf("%lu: in(%lu)\n", tid, offsets[tid]);
         while (consumed < my_chunk_size) {
             const auto first = read_byte(curr_in);
 
@@ -194,9 +194,7 @@ namespace rlev2 {
                 consumed += decode_delta(curr_in, first, curr_out);
                 break;
             }
-
-            // printf("consumed: %u\n", consumed);
-
+            // printf("%lu consumed: %u(%u)\n", tid, consumed, my_chunk_size);
         }
     }
 
@@ -215,6 +213,7 @@ namespace rlev2 {
         const uint64_t data_bytes = in_n_bytes - header_bytes;
         const uint64_t raw_data_bytes = *((uint64_t*)(in + header_bytes - sizeof(uint64_t)));
 
+        // printf("ptrs %u\n", n_ptr);
         cuda_err_chk(cudaMalloc((void**)&d_in, data_bytes));
         cuda_err_chk(cudaMalloc((void**)&d_ptr, sizeof(uint64_t) * n_ptr));
         cuda_err_chk(cudaMalloc((void**)&d_out, raw_data_bytes));

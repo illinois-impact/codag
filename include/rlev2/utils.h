@@ -53,7 +53,7 @@ constexpr   uint32_t MAX_SHORT_REPEAT_LENGTH_() { return 10; }
 #define MAX_LITERAL_SIZE          MAX_LITERAL_SIZE_()
 #define MINIMUM_REPEAT            MINIMUM_REPEAT_()
 #define MAXIMUM_REPEAT            MAXIMUM_REPEAT_()
-#define OUTPUT_CHUNK_SIZE         OUTPUT_CHUNK_SIZE_() //maximum output chunk size
+#define OUTPUT_CHUNK_SIZE         OUTPUT_CHUNK_SIZE_() // TODO: this is probably not a tight bound.
 #define HIST_LEN                  HIST_LEN_()
 #define MAX_SHORT_REPEAT_LENGTH   MAX_SHORT_REPEAT_LENGTH_()
 
