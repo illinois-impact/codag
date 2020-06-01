@@ -28,8 +28,9 @@ void test(int64_t ll[], uint8_t exp[], int64_t in_n_bytes, int64_t out_exp_bytes
         // printf("out[%d]: %ld\n", i, decoded[i]);
         assert(decoded[i] == ll[i]);
     }
-    delete[] out;
     delete[] decoded;
+
+    delete[] out;
 }
 
 void test_PB() {

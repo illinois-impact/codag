@@ -204,6 +204,8 @@ namespace rlev2 {
     }
 
     __host__ void decompress_gpu(const uint8_t* in, const uint64_t in_n_bytes, int64_t*& out, uint64_t& out_n_bytes) {
+        initialize_bit_maps();
+        
         uint8_t *d_in;
         int64_t *d_out;
         uint64_t *d_ptr;

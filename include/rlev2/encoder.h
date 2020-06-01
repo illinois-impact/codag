@@ -676,6 +676,8 @@ namespace rlev2 {
     }
 
     __host__ void compress_gpu(const int64_t* in, const uint64_t in_n_bytes, uint8_t*& out, uint64_t& out_n_bytes) {
+        initialize_bit_maps();
+        
         uint32_t n_chunks = (in_n_bytes - 1) / CHUNK_SIZE + 1;
         int64_t* d_in;
         uint8_t *d_out, *d_shift;
