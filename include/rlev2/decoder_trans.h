@@ -4,31 +4,9 @@
 #include "utils.h"
 #include <stdio.h>
 
+#define WRITE_OFFSET 1
+
 namespace rlev2 {
-	__host__ __device__ int readVulong(uint8_t* in, int64_t& out) {
-        out = 0;
-        int offset = 0;
-		int proceed = 0;
-		uint8_t b = 0;
-        do {
-            b = *(in ++);
-			proceed ++;
-            out |= (0x7f & b) << offset;
-            offset += 7;
-        } while (b >= 0x80);
-		return proceed;
-    }
-
-	__host__ __device__ inline int64_t unZigZag(uint64_t value) {
-        return value >> 1 ^ -(value & 1);
-    }
-
-	__host__ __device__ int readVslong(uint8_t* in, int64_t& out) {
-		int ret = readVulong(in, out);
-		unZigZag(out);
-        return ret;
-    }
-
     void decompress_func_new(const uint8_t* const in, int64_t* out, 
                         const uint64_t in_n_bytes, const uint64_t out_n_bytes, 
                         const uint64_t out_chunk_size, const uint64_t n_chunks, 
@@ -72,11 +50,6 @@ namespace rlev2 {
 		uint8_t input_buffer_count = 0;
 		// uint8_t input_buffer_read_count = 0;
 
-		bool stall_flag = false;
-		uint8_t header_off = 0;
-		bool type = 0;
-		uint32_t type_0_byte = 0;
-		uint64_t type_0_v = 0;
 		uint64_t read_count = 0;
 
 		bool read_first = false, read_second = false, read_third = false, read_forth = false;
@@ -84,27 +57,28 @@ namespace rlev2 {
 
 		// for complicated encoding schemes, input_buffer may not have enough data
 		// needs a structure to hold the info of last encoding scheme
-		uint16_t curr_len; 
+		uint16_t curr_len = 0; 
 
 		int64_t curr_64; // current outint, might not be complete
-		uint16_t bits_left_to_read, bits_left;
+		uint16_t bits_left_to_read, bits_left = 0;
 		uint8_t bits_left_over; // leftover from last byte since bit packing
 
 		bool dal_read_base = false;
-
+		int64_t base_val, base_delta, *base_out; // for delta encoding
 
 #define proceed(x) { \
 	input_buffer_count -= x; \
 	used_bytes += x; \
-	input_buffer_head = (input_buffer_head + 1) % INPUT_BUFFER_SIZE; \
+	input_buffer_head = (input_buffer_head + x) % INPUT_BUFFER_SIZE; \
 }
 
 #define write_varint(i) { \
-	*(out_8B ++) = i; \
+	*out_8B = i; \
+	out_8B += WRITE_OFFSET; \
 }
 
-		static auto read_uvarint = [&input_buffer, &input_buffer_head, &input_buffer_count, &used_bytes]() {
-			int64_t out = 0;
+		auto read_uvarint = [&]() {
+			uint64_t out = 0;
 			int offset = 0;
 			uint8_t b = 0;
 			do {
@@ -116,17 +90,46 @@ namespace rlev2 {
 			return out;
 		};
 
-		static auto read_svarint = [&input_buffer, &input_buffer_head, &input_buffer_count, &used_bytes]() {
+		auto read_svarint = [&]() {
 			auto ret = static_cast<int64_t>(read_uvarint());
 			return ret >> 1 ^ -(ret & 1);
 		};
 
+		auto read_longs = [&](uint8_t fbw) {
+			while (curr_len > 0 && (input_buffer_count || bits_left)) {
+				bits_left_to_read = fbw;
+				while (input_buffer_count && bits_left_to_read > bits_left) {
+					curr_64 <<= bits_left;
+					curr_64 |= bits_left_over & ((1 << bits_left) - 1);
+					bits_left_to_read -= bits_left;
+					bits_left_over = input_buffer[input_buffer_head];
+					proceed(1);
+					bits_left = 8;
+					
+				}
 
-		int64_t base_val, base_delta; // for delta encoding
+				if (bits_left_to_read <= bits_left) {
+				// if not curr_64 is imcomplete
+					if (bits_left_to_read > 0) {
+						curr_64 <<= bits_left_to_read;
+						bits_left -= bits_left_to_read;
+						curr_64 |= (bits_left_over >> bits_left) & ((1 << bits_left_to_read) - 1);
+					}
+
+					write_varint(curr_64);
+					curr_len --;
+					curr_64 = 0;
+				}
+			}
+		};
+
+
 
 		// printf("chunk size: %lu\n", mychunk_size);
 
-        while (used_bytes < mychunk_size) {
+		// bits_left is for 3 other encoding schemes
+        while (used_bytes < mychunk_size || curr_len > 0) {
+			// printf("loop\n");
             // unsigned mask = __activemask();
             bool read = read_count < mychunk_size;
 			// int res = __popc(__ballot_sync(mask, (read)));
@@ -138,8 +141,7 @@ namespace rlev2 {
 				input_buffer_count += 4;
 				read_count += 4;
 		
-				in_4B_off += 1;
-
+				in_4B_off += 1; //TODO: this should be block offset
             } 
 
 			if (!read_first) {
@@ -179,37 +181,13 @@ namespace rlev2 {
 					bits_left_over = 0;
 					curr_64 = 0;
 				}
-				while (input_buffer_count && curr_len > 0) {
-					bits_left_to_read = curr_fbw;
-					while (input_buffer_count && bits_left_to_read > bits_left) {
-						curr_64 <<= bits_left;
-						curr_64 |= bits_left_over & ((1 << bits_left) - 1);
-						bits_left_to_read -= bits_left;
-						bits_left_over = input_buffer[input_buffer_head];
-						proceed(1);
-						bits_left = 8;
-					}
-
-					if (bits_left_to_read <= bits_left) {
-					// if not curr_64 is imcomplete
-						if (bits_left_to_read > 0) {
-							curr_64 <<= bits_left_to_read;
-							bits_left -= bits_left_to_read;
-							curr_64 |= (bits_left_over >> bits_left) & ((1 << bits_left_to_read) - 1);
-						}
-
-						write_varint(curr_64);
-						curr_len --;
-						curr_64 = 0;
-					}
-				}
+				read_longs(curr_fbw);
 				if (curr_len == 0) {
 					read_first = false; read_second = false;
 				}
 			}	break;
 			case HEADER_DELTA: {
         		uint8_t curr_fbw = get_decoded_bit_width((first_byte >> 1) & 0x1f);
-				printf("bits needed %u\n", curr_fbw);
 				if (!read_second) {
 					read_second = true;
 					curr_len = ((static_cast<uint16_t>(first_byte & 0x01) << 8) | input_buffer[input_buffer_head]) + 1;
@@ -220,7 +198,7 @@ namespace rlev2 {
 				}
 
 				// TODO: double check whether curr_fbw represent base length or delta length 
-				if (!dal_read_base && input_buffer_count >= 2 * curr_fbw / 8) {
+				if (!dal_read_base && input_buffer_count >= 2 * curr_fbw / 8) {//TODO: should be min(fbw, 8)
 					base_val = read_uvarint();
 					base_delta = read_svarint();
 					
@@ -228,54 +206,40 @@ namespace rlev2 {
 					base_val += base_delta;
 					write_varint(base_val);
 
+					base_out = out_8B;
+
 					curr_len -= 2;
-					
-					// proceed(readVulong(input_buffer, base_val));
-					// proceed(readVslong(input_buffer, base_delta));
-					
-					// printf("read Long %ld\n", base_val);
-					// printf("read Long %ld\n", base_delta);
 					dal_read_base = true;
 				}
 
 				if (dal_read_base) {
 					if (curr_fbw != 0) {
-						while (input_buffer_count && curr_len > 0) {
-							bits_left_to_read = curr_fbw;
-							while (input_buffer_count && bits_left_to_read > bits_left) {
-								curr_64 <<= bits_left;
-								curr_64 |= bits_left_over & ((1 << bits_left) - 1);
-								bits_left_to_read -= bits_left;
-								bits_left_over = input_buffer[input_buffer_head];
-								proceed(1);
-								bits_left = 8;
-							}
-
-							if (bits_left_to_read <= bits_left) {
-							// if not curr_64 is imcomplete
-								if (bits_left_to_read > 0) {
-									curr_64 <<= bits_left_to_read;
-									bits_left -= bits_left_to_read;
-									curr_64 |= (bits_left_over >> bits_left) & ((1 << bits_left_to_read) - 1);
-								}
-
-								write_varint(curr_64);
-								curr_len --;
-								curr_64 = 0;
-							}
-						}
+						// var delta
+						read_longs(curr_fbw);
 						
 					} else {
+						// fixed delta encoding
 						while (curr_len-- > 0) {
 							base_val += base_delta;
 							write_varint(base_val);
 						}
 					}
+
 					if (curr_len == 0) {
+						if (base_delta > 0) {
+							while (base_out < out_8B) {
+								base_val = *base_out += base_val;
+								base_out += WRITE_OFFSET;
+							}
+						} else {
+							while (base_out < out_8B) {
+                    			base_val = *base_out = base_val - *base_out;
+								base_out += WRITE_OFFSET;
+							}
+						}
 						read_first = false; read_second = false;
 					}
 				}
-
 			}	break;
 			case HEADER_PACTED_BASE: {
 
