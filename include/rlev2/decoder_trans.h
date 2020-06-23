@@ -60,11 +60,13 @@ namespace rlev2 {
 		uint16_t curr_len = 0; 
 
 		int64_t curr_64; // current outint, might not be complete
-		uint16_t bits_left_to_read, bits_left = 0;
+		uint16_t bits_left = 0;
 		uint8_t bits_left_over; // leftover from last byte since bit packing
 
 		bool dal_read_base = false;
 		int64_t base_val, base_delta, *base_out; // for delta encoding
+
+		uint8_t bw, pw, pgw, pll, patch_gap; // for patched base encoding
 
 #define proceed(x) { \
 	input_buffer_count -= x; \
@@ -77,6 +79,15 @@ namespace rlev2 {
 	out_8B += WRITE_OFFSET; \
 }
 
+		auto read_byte = [&]() {
+			auto ret = input_buffer[input_buffer_head];
+			input_buffer_count -= 1;
+			used_bytes += 1;
+			input_buffer_head = (input_buffer_head + 1) % INPUT_BUFFER_SIZE;
+			return ret;
+		};
+
+		// by default, lambda captures what was referecnes in lambda
 		auto read_uvarint = [&]() {
 			uint64_t out = 0;
 			int offset = 0;
@@ -95,9 +106,18 @@ namespace rlev2 {
 			return ret >> 1 ^ -(ret & 1);
 		};
 
+		auto read_long = [&](uint8_t fbw) {
+			int64_t ret = 0;
+			while (fbw-- > 0) {
+				ret |= (input_buffer[input_buffer_head] << (fbw * 8));
+				proceed(1);
+			}
+			return ret;
+		};
+
 		auto read_longs = [&](uint8_t fbw) {
 			while (curr_len > 0 && (input_buffer_count || bits_left)) {
-				bits_left_to_read = fbw;
+				auto bits_left_to_read = fbw;
 				while (input_buffer_count && bits_left_to_read > bits_left) {
 					curr_64 <<= bits_left;
 					curr_64 |= bits_left_over & ((1 << bits_left) - 1);
@@ -195,6 +215,7 @@ namespace rlev2 {
 					bits_left = 0;
 					bits_left_over = 0;
 					curr_64 = 0;
+					dal_read_base = false;
 				}
 
 				// TODO: double check whether curr_fbw represent base length or delta length 
@@ -242,7 +263,80 @@ namespace rlev2 {
 				}
 			}	break;
 			case HEADER_PACTED_BASE: {
+				//TODO Try to guarantee there are at least 4 btyes to read (all headers)
+				uint8_t curr_fbw = get_decoded_bit_width((first_byte >> 1) & 0x1f);
+				if (!read_second) {
+					if (input_buffer_count < 3) break;
+				// Here for patched base, read_second includes third and forth header byte
+					curr_len = ((static_cast<uint16_t>(first_byte & 0x01) << 8) | input_buffer[input_buffer_head]) + 1;
+					proceed(1);
+					auto third = input_buffer[input_buffer_head];
+					proceed(1);
+        			auto forth = input_buffer[input_buffer_head];
+					proceed(1);
 
+					bw = ((third >> 5) & 0x07) + 1;
+					pw = get_decoded_bit_width(third & 0x1f);
+					pgw = ((forth >> 5) & 0x07) + 1;
+					pll = forth & 0x1f;
+
+					bits_left = 0;
+					bits_left_over = 0;
+					curr_64 = 0;
+					patch_gap = 0;
+					dal_read_base = false;
+
+					read_second = true;
+				}
+
+				// TODO: double check whether curr_fbw represent base length or delta length 
+				if (!dal_read_base && input_buffer_count >= bw) {//TODO: should be min(fbw, 8)
+					base_val = read_long(bw);
+					base_out = out_8B;
+					dal_read_base = true;
+				}
+				if (curr_len > 0) {
+					read_longs(curr_fbw);
+				} else {
+					// process patched list
+					auto cfb = get_closest_bit(pw + pgw);
+					auto patch_mask = (static_cast<uint16_t>(1) << pw) - 1;
+					while (pll > 0 && (input_buffer_count || bits_left)) {
+						auto bits_left_to_read = cfb;
+						while (input_buffer_count && bits_left_to_read > bits_left) {
+							curr_64 <<= bits_left;
+							curr_64 |= bits_left_over & ((1 << bits_left) - 1);
+							bits_left_to_read -= bits_left;
+							bits_left_over = input_buffer[input_buffer_head];
+							proceed(1);
+							bits_left = 8;
+						}
+
+						if (bits_left_to_read <= bits_left) {
+						// if not curr_64 is imcomplete
+							if (bits_left_to_read > 0) {
+								curr_64 <<= bits_left_to_read;
+								bits_left -= bits_left_to_read;
+								curr_64 |= (bits_left_over >> bits_left) & ((1 << bits_left_to_read) - 1);
+							}
+
+							// write_varint(curr_64);
+							patch_gap += curr_64 >> pw;
+							base_out[patch_gap * WRITE_OFFSET] |= static_cast<int64_t>(curr_64 & patch_mask) << curr_fbw;
+
+
+							pll --;
+							curr_64 = 0;
+						}
+					}
+					if (pll == 0) {
+						while (base_out < out_8B) {
+							*base_out += base_val;
+							base_out += WRITE_OFFSET;
+						}
+						read_first = false; read_second = false;
+					}
+				}
 			}	break;
 			}
         }
