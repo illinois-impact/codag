@@ -1,6 +1,6 @@
-#include "decoder_trans.h"
 #include <stdio.h>
 #include <cassert>
+#include <rlev2/rlev2.h>
 
 void test_SHORTREPEAT() {
     printf("================ TEST SHORT REPEAT =================\n");
@@ -126,11 +126,31 @@ void test_PTACHED_BASE() {
     printf("================ PASS PATCHED BASE =================\n\n");
 }
 
+void test_encode_transpose() {
+    int64_t repeat[] =  {2, 3, 5, 7, 11, 13, 17, 19, 23, 29};
+    uint8_t repeatin[] = {0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46};
+
+    int64_t ll[32 * 12];
+    uint8_t in[1024];
+
+    for (int i=0; i<320; i+=32) {
+        for (int j=0; j<32; ++j) {
+            ll[i + j] = repeat[i / 32];
+        }
+    }
+
+    uint8_t out[1024], *out_ptr = nullptr;
+    uint64_t out_bytes = 0;
+
+    rlev2::compress_gpu_transpose(ll, sizeof(ll), out_ptr, out_bytes);
+}
+
 int main() {
-    test_SHORTREPEAT();
-    test_DIRECT();
-    test_DELTA();
-    test_PTACHED_BASE();
-    test_MULTIPLE();
+    test_encode_transpose();
+    // test_SHORTREPEAT();
+    // test_DIRECT();
+    // test_DELTA();
+    // test_PTACHED_BASE();
+    // test_MULTIPLE();
     return 0;
 }

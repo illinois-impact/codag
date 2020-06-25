@@ -7,7 +7,7 @@
 #include "utils.h"
 
 namespace rlev2 {
-    typedef struct encode_info {
+    struct encode_info {
         int64_t deltas[MAX_LITERAL_SIZE];
         int64_t literals[MAX_LITERAL_SIZE];
 
@@ -25,13 +25,12 @@ namespace rlev2 {
         inline void write_value(uint8_t val) {
             output[potision ++] = val;
         }
-    } encode_info;
+    };
 
     typedef struct patch_blob {
         uint32_t patch_len;
         uint32_t patch_width;
         uint32_t patch_gap_width;
-        uint32_t patch_list_position = 0;
         uint8_t bits95p, bits100p; //should be reduced values' bits
         int64_t literal_min; //used for reducing other literals
         int64_t reduced_literals[MAX_LITERAL_SIZE];
@@ -346,8 +345,6 @@ namespace rlev2 {
             writeDirectValues(info);
             return;
         }
-
-        printf(" reach end of no return \n");
     }
 
     __host__ __device__
@@ -433,11 +430,11 @@ namespace rlev2 {
 
     __host__ __device__ 
     void writeDeltaValues(encode_info& info) {
-        // printf("write delta\n");
-
         uint16_t len = 0;
         uint8_t encoded_width = 0;
         uint8_t num_bits = get_closest_aligned_bit(info.delta_bits);
+
+
 
         if (info.is_fixed_delta) {
             if (info.fix_runlen > MINIMUM_REPEAT) {
@@ -552,10 +549,11 @@ namespace rlev2 {
         const uint64_t start = tid * CHUNK_SIZE / sizeof(int64_t);
         const uint64_t end = min((tid + 1) * CHUNK_SIZE, in_n_bytes) / sizeof(int64_t);
 
+        auto mychunk_size = end - start;
         // printf("%lu: (%lu, %lu)\n", tid, start, end);
 
-        for (auto i=start; i<end; ++i) {
-            auto val = in[i];
+        while (mychunk_size-- > 0) {
+            auto val = *(in ++);
             // printf("%lu read %ld(%lu)\n", tid, val, i);
             if (num_literals == 0) {
                 literals[num_literals ++] = val;
@@ -591,7 +589,7 @@ namespace rlev2 {
                     determineEncoding(info);
 
                     for (uint32_t ii = 0; ii < MINIMUM_REPEAT; ++ii) {
-                        literals[i] = val;
+                        literals[ii] = val;
                     }
                     num_literals = MINIMUM_REPEAT;
                 }

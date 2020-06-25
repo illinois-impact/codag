@@ -38,7 +38,7 @@ void test_PB() {
     uint8_t exp[] = {0x8e, 0x13, 0x2b, 0x21, 0x07, 0xd0, 0x1e, 0x00, 0x14, 0x70, 0x28, 0x32, 0x3c, 0x46, 0x50, 0x5a, 0x64, 0x6e, 0x78, 0x82, 0x8c, 0x96, 0xa0, 0xaa, 0xb4, 0xbe, 0xfc, 0xe8};
     test(ll, exp, sizeof(ll), sizeof(exp));
 
-    fprintf(stderr, "====== DIRECTE PASSED =====\n");
+    fprintf(stderr, "====== PATCHED BASE PASSED =====\n");
 }
 
 void test_DIRECT() {
@@ -70,8 +70,8 @@ void test_SHORTREPEAT() {
 
 int main() {
     test_DELTA();
-    test_SHORTREPEAT();
-    test_DIRECT();
-    test_PB();
+    // test_SHORTREPEAT();
+    // test_DIRECT();
+    // test_PB();
     return 0;
 }
