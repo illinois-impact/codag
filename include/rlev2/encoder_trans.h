@@ -181,7 +181,7 @@ namespace rlev2 {
         // uint8_t* out_4B = blk_off[cid] - blk_off[0] + WRITE_UNIT * tid;
 
         uint32_t write_off =  blk_off[cid] + (tid == 0 ? 0 : col_len[tid - 1]);
-        printf("thread %d write offset %u\n", tid, write_off);
+        // printf("thread %d write offset %u\n", tid, write_off);
 
         uint8_t* out_4B = out + write_off;
 

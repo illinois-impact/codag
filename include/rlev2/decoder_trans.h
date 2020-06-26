@@ -5,6 +5,7 @@
 #include <stdio.h>
 
 #define WRITE_OFFSET 1
+#define DEBUG
 
 namespace rlev2 {
     void decompress_func_new(const uint8_t* const in, int64_t* out, 
@@ -344,7 +345,7 @@ namespace rlev2 {
 		uint64_t mychunk_size = col_len[cid * BLK_SIZE + tid];
 		uint64_t in_start_idx = blk_off[cid];
 
-		uint64_t out_start_idx = 0;//cid * CHUNK_SIZE;
+		uint64_t out_start_idx = cid * CHUNK_SIZE / sizeof(int64_t);
 
 		// if (cid == 0 && tid == 0) printf("thread 0 start from %lu\n", in_start_idx);
 
@@ -386,7 +387,7 @@ namespace rlev2 {
 
 #define write_varint(i) { \
 	*out_8B = i; \
-	out_8B += BLK_SIZE; \
+	out_8B += BLK_SIZE; \ //THIS SHOULD BE EQUIVALENT TO Encoder's read.
 }
 
 	// printf("thread %d write %ld\n", tid, i); \
@@ -454,9 +455,6 @@ namespace rlev2 {
 				}
 			}
 		};
-
-		int max_iter = 10;
-		int iter = 0;
 
 		// bits_left is for 3 other encoding schemes
         while (used_bytes < mychunk_size || curr_len > 0) {
@@ -533,7 +531,6 @@ namespace rlev2 {
 				if (!read_second) {
 					read_second = true;
 					curr_len = (((first_byte & 0x01) << 8) | input_buffer[input_buffer_head]) + 1;
-					printf("curr_len should be 128(%d)\n", curr_len);
 					proceed(1);
 					bits_left = 0;
 					bits_left_over = 0;
@@ -558,7 +555,6 @@ namespace rlev2 {
 
 				if (dal_read_base) {
 					if (((first_byte >> 1) & 0x1f) != 0) {
-						if (cid + tid == 0) printf("this line should not accur\n");
 						// var delta
 						read_longs(curr_fbw);
 						
@@ -569,10 +565,14 @@ namespace rlev2 {
 							write_varint(base_val);
 							curr_len --;
 						}
-						if (cid + tid == 0) printf("curr_len after write %d\n", curr_len);
 					}
 
 					if (curr_len <= 0) {
+#ifdef DEBUG
+						if (curr_len < 0) {
+							printf("thread %d is wrong with currlen < 0\n", tid);
+						}
+#endif
 						if (((first_byte >> 1) & 0x1f) != 0) {
 							if (base_delta > 0) {
 								while (base_out < out_8B) {
@@ -671,20 +671,21 @@ namespace rlev2 {
 			}	break;
 			}
 
-			if (cid + tid == 0) {
-				printf("used bytes: %lu\n", used_bytes);
-				printf("mychunk_size: %lu\n", mychunk_size);
-				printf("curr_len: %d\n", curr_len);
-			}
-			if (iter++ > 2) {
-				// if (cid == 0 && tid == 0) {
-				// 	printf("used bytes: %lu\n", used_bytes);
-				// 	printf("mychunk_size: %lu\n", mychunk_size);
-				// 	printf("curr_len: %d\n", curr_len);
-				// }
-				break;
+			// if (cid + tid == 0) {
+			// 	printf("used bytes: %lu\n", used_bytes);
+			// 	printf("mychunk_size: %lu\n", mychunk_size);
+			// 	printf("curr_len: %d\n", curr_len);
+			// }
+			// if (iter++ > 10) {
+			// 	printf("iter shold not go over 10\n");
+			// 	// if (cid == 0 && tid == 0) {
+			// 	// 	printf("used bytes: %lu\n", used_bytes);
+			// 	// 	printf("mychunk_size: %lu\n", mychunk_size);
+			// 	// 	printf("curr_len: %d\n", curr_len);
+			// 	// }
+			// 	break;
 
-			}
+			// }
 			// break; //BREAK AFTER ONE ITER [DEL]
         }
 #undef proceed
@@ -706,9 +707,9 @@ namespace rlev2 {
 		blk_off_t *d_blk_off;
 		col_len_t *d_col_len;
 		cuda_err_chk(cudaMalloc(&d_in, in_n_bytes));
-		cuda_err_chk(cudaMalloc(&d_out, n_chunks * CHUNK_SIZE));
-		cuda_err_chk(cudaMalloc(&d_blk_off, n_chunks * CHUNK_SIZE));
-		cuda_err_chk(cudaMalloc(&d_col_len, n_chunks * CHUNK_SIZE * BLK_SIZE));
+		cuda_err_chk(cudaMalloc(&d_out, n_chunks * CHUNK_SIZE * sizeof(int64_t)));
+		cuda_err_chk(cudaMalloc(&d_blk_off, sizeof(blk_off_t) * n_chunks));
+		cuda_err_chk(cudaMalloc(&d_col_len, sizeof(col_len_t) * n_chunks * BLK_SIZE));
 			
 		cuda_err_chk(cudaMemcpy(d_in, in, in_n_bytes, cudaMemcpyHostToDevice));
 		cuda_err_chk(cudaMemcpy(d_blk_off, blk_off, sizeof(blk_off_t) * n_chunks, cudaMemcpyHostToDevice));
@@ -721,12 +722,22 @@ namespace rlev2 {
 					d_out);
 		cuda_err_chk(cudaDeviceSynchronize());
 
-		out = new int64_t[1024];
-		cuda_err_chk(cudaMemcpy(out, d_out, 1024 * sizeof(int64_t), cudaMemcpyDeviceToHost));
+
+    	int64_t n_digits = CHUNK_SIZE * 2 / sizeof(int64_t);
+
+		out = new int64_t[n_digits];
+		cuda_err_chk(cudaMemcpy(out, d_out, n_digits * sizeof(int64_t), cudaMemcpyDeviceToHost));
 		
-		for (int i=0; i<32; ++i) {
-			printf("out[%d]: %ld\n", i, out[i]);
+
+
+		printf("total out should be: %ld\n", n_digits);
+		for (int i=0; i<n_digits; ++i) {
+			if (out[i] != 1) {
+				printf("===========wring at %d\n", i);
+				break;
+			}
 		}
+
 
 
 		cuda_err_chk(cudaFree(d_in));
