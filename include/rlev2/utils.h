@@ -99,9 +99,11 @@ constexpr   uint32_t MAX_SHORT_REPEAT_LENGTH_() { return 10; }
 #define HIST_LEN                  HIST_LEN_()
 #define MAX_SHORT_REPEAT_LENGTH   MAX_SHORT_REPEAT_LENGTH_()
 
+#define ENCODE_UNIT  1 //each thread read 1 unit of input and proceed to next blk
+#define DECODE_UNIT  4 //each thread write 4 unit of output and proceed to next blk
+
 typedef uint64_t col_len_t;
 typedef uint64_t blk_off_t;
-typedef uint8_t  col_map_t;
 
 template<typename _Tp>
 __host__ __device__

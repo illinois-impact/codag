@@ -196,10 +196,16 @@ namespace rlev2 {
         auto& var_runlen = info.var_runlen;
         int64_t *literals = info.literals;
 
+        int read_unit = 0;
+
         // printf("thread %d with chunksize %ld\n", tid, mychunk_size);
         while (in_start < in_start_limit) {
             auto val = in[in_start];
-            in_start += READ_UNIT * BLK_SIZE;
+            read_unit ++;
+            if (read_unit == ENCODE_UNIT) {
+                read_unit = 0;
+                in_start += ENCODE_UNIT * BLK_SIZE;
+            }
             // if (tid == 0) printf("%lu read %ld\n", tid, val);
             if (num_literals == 0) {
                 literals[num_literals ++] = val;
@@ -312,8 +318,11 @@ namespace rlev2 {
     }
 
     __global__ 
-    void tranpose(uint8_t* origin, col_len_t *col_len, blk_off_t *blk_off, uint8_t* ret) {
+    void tranpose_col_len(uint8_t* in_col_len, col_len_t *col_len, blk_off_t *blk_off, uint8_t* out_col_len) {
+        uint32_t tid = threadIdx.x;
+        uint32_t cid = blockIdx.x;
 
+        
     }
 
 

@@ -12,10 +12,10 @@ void test_SHORTREPEAT() {
     uint8_t col_map[32] = {0};
     int64_t out[1024] = {0};
 
-    rlev2::decompress_func_new(in, out,
-                0, 0, 
-                0, 0,
-                blk_off, col_len, col_map);
+    // rlev2::decompress_func_new(in, out,
+    //             0, 0, 
+    //             0, 0,
+    //             blk_off, col_len, col_map);
 
     for (int i=0; i<sizeof(ll) / sizeof(int64_t); ++i) {
         assert(out[i] == ll[i]);
@@ -33,10 +33,10 @@ void test_DIRECT() {
     uint8_t col_map[32] = {0};
     int64_t out[1024] = {0};
 
-    rlev2::decompress_func_new(in, out,
-                0, 0, 
-                0, 0,
-                blk_off, col_len, col_map);
+    // rlev2::decompress_func_new(in, out,
+    //             0, 0, 
+    //             0, 0,
+    //             blk_off, col_len, col_map);
 
     for (int i=0; i<sizeof(ll) / sizeof(int64_t); ++i) {
         assert(out[i] == ll[i]);
@@ -62,10 +62,10 @@ void test_MULTIPLE() {
     uint8_t col_map[32] = {0};
     int64_t out[1024] = {0};
 
-    rlev2::decompress_func_new(in, out,
-                0, 0, 
-                0, 0,
-                blk_off, col_len, col_map);
+    // rlev2::decompress_func_new(in, out,
+    //             0, 0, 
+    //             0, 0,
+    //             blk_off, col_len, col_map);
 
     // for (int i=0; i<sizeof(in); ++i) {
     //     printf("[%d]: %x\n", i, in[i]);
@@ -91,10 +91,10 @@ void test_DELTA() {
     uint8_t col_map[32] = {0};
     int64_t out[1024] = {0};
 
-    rlev2::decompress_func_new(in, out,
-                0, 0, 
-                0, 0,
-                blk_off, col_len, col_map);
+    // rlev2::decompress_func_new(in, out,
+    //             0, 0, 
+    //             0, 0,
+    //             blk_off, col_len, col_map);
 
     for (int i=0; i<sizeof(ll) / sizeof(int64_t); ++i) {
         // printf("out[%d]: %ld\n", i, out[i]);
@@ -114,10 +114,10 @@ void test_PTACHED_BASE() {
     uint8_t col_map[32] = {0};
     int64_t out[1024] = {0};
 
-    rlev2::decompress_func_new(in, out,
-                0, 0, 
-                0, 0,
-                blk_off, col_len, col_map);
+    // rlev2::decompress_func_new(in, out,
+    //             0, 0, 
+    //             0, 0,
+    //             blk_off, col_len, col_map);
 
     for (int i=0; i<sizeof(ll) / sizeof(int64_t); ++i) {
         // printf("out[%d]: %ld\n", i, out[i]);
