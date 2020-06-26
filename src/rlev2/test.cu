@@ -16,6 +16,7 @@ void test(int64_t ll[], uint8_t exp[], int64_t in_n_bytes, int64_t out_exp_bytes
         // printf("out[%d]: %x\n", i, out[base + i]);
         assert(exp[i] == out[base + i]);
     }
+    // return;
 
     int64_t *decoded;
     uint64_t decode_bytes;
@@ -59,6 +60,18 @@ void test_DELTA() {
     fprintf(stderr, "====== DELTA PASSED =====\n");
 }
 
+void test_DELTA2() {
+    int64_t ll[150];
+    for (int i=0; i<150; ++i) {
+        ll[i] = 1;
+    }
+    uint8_t exp[] = {0xc0, 0x7f, 0x1, 0, 0xc0, 0x15, 0x1, 0};
+   
+    test(ll, exp, sizeof(ll), sizeof(exp));
+
+    fprintf(stderr, "====== DELTA(2) PASSED =====\n");
+}
+
 void test_SHORTREPEAT() {
     int64_t ll[] =  {10000, 10000, 10000, 10000, 10000};
     uint8_t exp[] = {0x0a, 0x27, 0x10};
@@ -70,8 +83,9 @@ void test_SHORTREPEAT() {
 
 int main() {
     test_DELTA();
-    // test_SHORTREPEAT();
-    // test_DIRECT();
-    // test_PB();
+    test_DELTA2();
+    test_SHORTREPEAT();
+    test_DIRECT();
+    test_PB();
     return 0;
 }

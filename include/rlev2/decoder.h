@@ -93,14 +93,19 @@ namespace rlev2 {
         auto base_val = static_cast<int64_t>(readVulong(in));
         auto base_delta = static_cast<int64_t>(readVslong(in));
 
+        // printf("base val: %ld\n", base_val);
+        // printf("base_deltal: %ld\n", base_delta);
+        // printf("base len: %u\n", len);
+
         write_val(base_val, out);
         base_val += base_delta;
         write_val(base_val, out);
+        // printf("encoded_fbw(delta) %u(%ld)\n", encoded_fbw, base_delta);
 
         auto curr = out;
 
         bool increasing = (base_delta > 0);
-        if (fbw != 0) {
+        if (encoded_fbw != 0) {
             uint32_t consumed = readLongs(in, out, len - 2, fbw);
             if (increasing) {
                 for (uint16_t i=0; i<len; ++i) {
@@ -113,6 +118,7 @@ namespace rlev2 {
             }
             return consumed + 4; //2 for header, 2 for base val and base delta
         } else {
+            // printf("write fixed delta\n");
             for (uint16_t i=2; i<len; ++i) {
                 base_val += base_delta;
                 write_val(base_val, out);

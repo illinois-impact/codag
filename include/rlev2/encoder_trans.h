@@ -21,8 +21,9 @@ namespace rlev2 {
 
         if (tid == 0) {
             blk_len = 0;
-            // if (cid == 0) {
-            // }
+            if (cid == 0) {
+                blk_off[0] = 0;
+            }
         }
         __syncthreads();
         int64_t in_start_limit = min((cid + 1) * CHUNK_SIZE, in_n_bytes) / sizeof(int64_t);
@@ -47,6 +48,8 @@ namespace rlev2 {
             // if (tid == 0) printf("%lu read %ld\n", tid, val);
             if (num_literals == 0) {
                 literals[num_literals ++] = val;
+                fix_runlen = 1;
+                var_runlen = 1;
                 continue;
             }
 
@@ -114,7 +117,9 @@ namespace rlev2 {
 
             // after writing values re-initialize the variables
             if (num_literals == 0) {
-                // initializeLiterals(val); // REMOVE COMMENT HERE
+                literals[num_literals ++] = val;
+                fix_runlen = 1;
+                var_runlen = 1;
             } else {
                 prev_delta = val - literals[num_literals - 1];
                 literals[num_literals++] = val;
@@ -155,7 +160,7 @@ namespace rlev2 {
         if (tid == 0) {
             // Block alignment should be 4(decoder's READ_UNIT) * 32 
             blk_len = (blk_len + 127) / 128 * 128;
-            blk_off[cid] = blk_len;
+            blk_off[cid + 1] = blk_len;
         }
         // *offset = info.potision;
         // printf("%lu: %x\n", tid, info.output[0]);
@@ -174,8 +179,9 @@ namespace rlev2 {
 
         //TODO: Make this more intelligent
         // uint8_t* out_4B = blk_off[cid] - blk_off[0] + WRITE_UNIT * tid;
-        uint32_t write_off =  blk_off[cid] - blk_off[0] + col_len[tid] - col_len[0];
-        printf("thread %d offset %u\n", tid, write_off);
+
+        uint32_t write_off =  blk_off[cid] + (tid == 0 ? 0 : col_len[tid - 1]);
+        printf("thread %d write offset %u\n", tid, write_off);
 
         uint8_t* out_4B = out + write_off;
 
@@ -197,6 +203,8 @@ namespace rlev2 {
             // if (tid == 0) printf("%lu read %ld\n", tid, val);
             if (num_literals == 0) {
                 literals[num_literals ++] = val;
+                fix_runlen = 1;
+                var_runlen = 1;
                 continue;
             }
 
@@ -265,6 +273,9 @@ namespace rlev2 {
             // after writing values re-initialize the variables
             if (num_literals == 0) {
                 // initializeLiterals(val); // REMOVE COMMENT HERE
+                literals[num_literals ++] = val;
+                fix_runlen = 1;
+                var_runlen = 1;
             } else {
                 prev_delta = val - literals[num_literals - 1];
                 literals[num_literals++] = val;
@@ -296,26 +307,38 @@ namespace rlev2 {
                 }
             }
         }
+
+        // printf("thread %d write %u bytes\n", tid, info.potision);
+    }
+
+    __global__ 
+    void tranpose(uint8_t* origin, col_len_t *col_len, blk_off_t *blk_off, uint8_t* ret) {
+
     }
 
 
     __host__
-    void compress_gpu_transpose(const int64_t* const in, const uint64_t in_n_bytes, uint8_t*& out, uint64_t& out_n_bytes) {
+    void compress_gpu_transpose(const int64_t* const in, const uint64_t in_n_bytes, uint8_t*& out, uint64_t& out_n_bytes,
+                    uint64_t& out_n_chunks, blk_off_t *&blk_off, col_len_t *&col_len) {
         uint32_t n_chunks = (in_n_bytes - 1) / CHUNK_SIZE + 1;
-
+        out_n_chunks = n_chunks;
+        
         int64_t *d_in;
         uint8_t *d_out;
-        col_len_t *col_len, *d_col_len; 
-        blk_off_t *blk_off, *d_blk_off;
-
+        col_len_t *d_col_len, *d_acc_col_len; //accumulated col len 
+        blk_off_t *d_blk_off;
         
-        printf("input chunk: %lu\n", CHUNK_SIZE);
-        printf("output chunk: %lu\n", n_chunks * OUTPUT_CHUNK_SIZE);
+        // printf("input chunk: %lu\n", CHUNK_SIZE);
+        // printf("output chunk: %lu\n", n_chunks * OUTPUT_CHUNK_SIZE);
+
+        printf("in_n_bytes: %lu\n", in_n_bytes);
+        printf("n_chunks: %u\n", n_chunks);
 
 	    cuda_err_chk(cudaMalloc(&d_in, in_n_bytes));
         cuda_err_chk(cudaMalloc(&d_out, n_chunks * OUTPUT_CHUNK_SIZE));
 	    cuda_err_chk(cudaMalloc(&d_col_len, sizeof(col_len_t) * n_chunks * BLK_SIZE));
-	    cuda_err_chk(cudaMalloc(&d_blk_off, sizeof(blk_off_t) * n_chunks));
+	    cuda_err_chk(cudaMalloc(&d_acc_col_len, sizeof(col_len_t) * n_chunks * BLK_SIZE));
+	    cuda_err_chk(cudaMalloc(&d_blk_off, sizeof(blk_off_t) * (n_chunks + 1)));
 
 	    cuda_err_chk(cudaMemcpy(d_in, in, in_n_bytes, cudaMemcpyHostToDevice));
         
@@ -324,53 +347,51 @@ namespace rlev2 {
         block_encode_new<<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
                             d_out, d_col_len,  d_blk_off);
 	    cuda_err_chk(cudaDeviceSynchronize()); 
-        thrust::inclusive_scan(thrust::device, d_blk_off, d_blk_off + n_chunks, d_blk_off);
+
+        thrust::inclusive_scan(thrust::device, d_blk_off, d_blk_off + n_chunks + 1, d_blk_off);
 	    cuda_err_chk(cudaDeviceSynchronize()); 
-        thrust::inclusive_scan(thrust::device, d_col_len, d_col_len + n_chunks * BLK_SIZE, d_col_len);
+        
+        thrust::inclusive_scan(thrust::device, d_col_len, d_col_len + n_chunks * BLK_SIZE, d_acc_col_len);
 	    cuda_err_chk(cudaDeviceSynchronize()); 
 
         block_encode_new_write<<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
-                            d_out, d_col_len,  d_blk_off);
+                            d_out, d_acc_col_len,  d_blk_off);
 	    cuda_err_chk(cudaDeviceSynchronize()); 
 
         col_len = new col_len_t[n_chunks * BLK_SIZE];
 	    cuda_err_chk(cudaMemcpy(col_len, d_col_len, sizeof(col_len_t) * BLK_SIZE * n_chunks, cudaMemcpyDeviceToHost));
 
-        blk_off = new blk_off_t[n_chunks];
-	    cuda_err_chk(cudaMemcpy(blk_off, d_blk_off, sizeof(blk_off_t) * n_chunks, cudaMemcpyDeviceToHost));
+        blk_off = new blk_off_t[n_chunks + 1];
+	    cuda_err_chk(cudaMemcpy(blk_off, d_blk_off, sizeof(blk_off_t) * (n_chunks + 1), cudaMemcpyDeviceToHost));
 
-        out_n_bytes = blk_off[n_chunks - 1];
+        out_n_bytes = blk_off[n_chunks];
         out = new uint8_t[out_n_bytes];
 	    cuda_err_chk(cudaMemcpy(out, d_out, out_n_bytes, cudaMemcpyDeviceToHost));
 
 	    // uint64_t padded_out_size = blk_off[n_chunks - 1];
         
+        // printf("eachh thread output %lu bytes\n", col_len[0]);
 
 
-        for (int i=0; i<blk_off[0]; ++i) {
-            printf("out[%d]: %x\n", i, out[i]);
-        }
-        // printf("first blk ================== \n");
-
-        // for (int i=col_len[0]; i<col_len[1]; ++i) {
+        // for (int i=0; i<128; ++i) {
         //     printf("out[%d]: %x\n", i, out[i]);
         // }
-        // printf("second blk ================== \n");
 
-        for (int i=0; i<n_chunks; ++i) {
-            printf("blk_off[%d]: %lu\n", i, blk_off[i]);
-        }
-
+        // for (int i=0; i<=n_chunks; ++i) {
+        //     printf("blk_off[%d]: %lu\n", i, blk_off[i]);
+        // }
 
 
-        delete[] col_len;
-        delete[] blk_off;
-        delete[] out;
+
+        // delete[] col_len;
+        // delete[] blk_off;
+        // delete[] out;
 
 
 	    cuda_err_chk(cudaFree(d_in));
 	    cuda_err_chk(cudaFree(d_out));
 	    cuda_err_chk(cudaFree(d_col_len));
+	    cuda_err_chk(cudaFree(d_acc_col_len));
 	    cuda_err_chk(cudaFree(d_blk_off));
     }
 

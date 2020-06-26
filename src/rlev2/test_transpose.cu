@@ -127,22 +127,44 @@ void test_PTACHED_BASE() {
 }
 
 void test_encode_transpose() {
-    int64_t repeat[] =  {2, 3, 5, 7, 11, 13, 17, 19, 23, 29};
-    uint8_t repeatin[] = {0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46};
+    // int64_t repeat[] =  {2, 3, 5, 7, 11, 13, 17, 19, 23, 29};
+    // uint8_t repeatin[] = {0xc6, 0x09, 0x02, 0x02, 0x22, 0x42, 0x42, 0x46};
 
-    int64_t ll[32 * 12];
-    uint8_t in[1024];
+    // int64_t ll[32 * 10];
+    // uint8_t in[1024];
 
-    for (int i=0; i<320; i+=32) {
-        for (int j=0; j<32; ++j) {
-            ll[i + j] = repeat[i / 32];
-        }
+    // for (int i=0; i<320; i+=32) {
+    //     for (int j=0; j<32; ++j) {
+    //         ll[i + j] = repeat[i / 32];
+    //     }
+    // }
+
+    int64_t n_digits = CHUNK_SIZE * 2 / sizeof(int64_t);
+
+    int64_t ll[n_digits];
+    for (int i=0; i<n_digits; ++i) {
+        ll[i] = 1;
     }
 
-    uint8_t out[1024], *out_ptr = nullptr;
+    uint8_t *out_ptr = nullptr;
     uint64_t out_bytes = 0;
 
-    rlev2::compress_gpu_transpose(ll, sizeof(ll), out_ptr, out_bytes);
+    blk_off_t *blk_off;
+    col_len_t *col_len;
+
+    int64_t *decompressed; 
+    uint64_t n_chunks, decompressed_bytes;
+
+    rlev2::compress_gpu_transpose(ll, sizeof(ll), out_ptr, out_bytes,
+        n_chunks, blk_off, col_len);
+
+    rlev2::decompress_gpu(out_ptr, out_bytes, n_chunks,
+            blk_off, col_len, decompressed, decompressed_bytes);
+
+    delete[] blk_off;
+    delete[] col_len;
+    delete[] out_ptr;
+    delete[] decompressed;
 }
 
 int main() {

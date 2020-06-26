@@ -434,8 +434,6 @@ namespace rlev2 {
         uint8_t encoded_width = 0;
         uint8_t num_bits = get_closest_aligned_bit(info.delta_bits);
 
-
-
         if (info.is_fixed_delta) {
             if (info.fix_runlen > MINIMUM_REPEAT) {
                 // ex. sequence: 2 2 2 2 2 2 2 2
@@ -554,9 +552,12 @@ namespace rlev2 {
 
         while (mychunk_size-- > 0) {
             auto val = *(in ++);
-            // printf("%lu read %ld(%lu)\n", tid, val, i);
+            // printf("%lu read %ld\n", tid, val);
             if (num_literals == 0) {
+                prev_delta = 0;
                 literals[num_literals ++] = val;
+                fix_runlen = 1;
+                var_runlen = 1;
                 continue;
             }
 
@@ -624,6 +625,9 @@ namespace rlev2 {
 
             // after writing values re-initialize the variables
             if (num_literals == 0) {
+                literals[num_literals ++] = val;
+                fix_runlen = 1;
+                var_runlen = 1;
                 // initializeLiterals(val); // REMOVE COMMENT HERE
             } else {
                 prev_delta = val - literals[num_literals - 1];
