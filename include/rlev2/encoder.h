@@ -107,27 +107,30 @@ namespace rlev2 {
     __host__ __device__
     void write_unaligned_ints(int64_t* in, uint32_t len, uint8_t bits, encode_info& info) {
         uint32_t bitsLeft = 8;
-        char current = 0;
+        uint8_t current = 0;
         for(uint32_t i=0; i <len; i++) {
             int64_t value = in[i];
+            printf("pb write val: %ld(%u)\n", value,bitsLeft);
             uint32_t bitsToWrite = bits;
 
             while (bitsToWrite > bitsLeft) {
                 // add the bits to the bottom of the current word
-                current |= static_cast<char>(value >> (bitsToWrite - bitsLeft));
+                current |= static_cast<uint8_t>(value >> (bitsToWrite - bitsLeft));
                 // subtract out the bits we just added
                 bitsToWrite -= bitsLeft;
                 // zero out the bits above bitsToWrite
                 value &= (static_cast<uint64_t>(1) << bitsToWrite) - 1;
 
                 info.write_value(current);
+                printf("write byte %x\n", info.output[info.potision - 1]);
                 current = 0;
                 bitsLeft = 8;
             }
             bitsLeft -= bitsToWrite;
-            current |= static_cast<char>(value << bitsLeft);
+            current |= static_cast<uint8_t>(value << bitsLeft);
             if (bitsLeft == 0) {
                 info.write_value(current);
+                printf("write byte %x\n", info.output[info.potision - 1]);
                 current = 0;
                 bitsLeft = 8;
             }
@@ -354,7 +357,7 @@ namespace rlev2 {
 
     __host__ __device__
     void writeShortRepeatValues(encode_info& info) {
-        // printf("write short repeat\n");
+        printf("write short repeat\n");
         int64_t	val = info.literals[0];
 
         const uint8_t val_bits = find_closes_num_bits(val);
@@ -383,7 +386,7 @@ namespace rlev2 {
 
     __host__ __device__
     void writeDirectValues(encode_info& info) {
-        // printf("write direct\n");
+        printf("write direct\n");
 
         // write the number of fixed bits required in next 5 bits
         uint8_t hist[HIST_LEN];
@@ -430,6 +433,8 @@ namespace rlev2 {
 
     __host__ __device__ 
     void writeDeltaValues(encode_info& info) {
+        printf("write delta\n");
+
         uint16_t len = 0;
         uint8_t encoded_width = 0;
         uint8_t num_bits = get_closest_aligned_bit(info.delta_bits);
@@ -467,7 +472,7 @@ namespace rlev2 {
     
     __host__ __device__ 
     void writePatchedBasedValues(encode_info& info, patch_blob& pb) {
-        // printf("write patched base\n");
+        printf("write patched base\n");
 
         uint32_t& varlen = info.var_runlen;
         varlen -= 1;

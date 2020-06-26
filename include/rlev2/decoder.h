@@ -60,6 +60,8 @@ namespace rlev2 {
                 bitsLeft -= static_cast<uint32_t>(bitsLeftToRead);
                 result |= (curByte >> bitsLeft) & ((1 << bitsLeftToRead) - 1);
             }
+
+            printf("data is %ld\n", result);
             write_val(static_cast<int64_t>(result), data);
         }
 
@@ -128,6 +130,7 @@ namespace rlev2 {
     }
 
     __host__ __device__ uint32_t decode_direct(uint8_t* &in, uint8_t first, int64_t* &out) {
+        // printf("Decode DIRECT\n");
         const uint8_t encoded_fbw = (first >> 1) & 0x1f;
         const uint8_t fbw = get_decoded_bit_width(encoded_fbw);
         const uint16_t len = ((static_cast<uint16_t>(first & 0x01) << 8) | read_byte(in)) + 1;
@@ -136,6 +139,7 @@ namespace rlev2 {
     }
 
     __host__ __device__ uint32_t decode_patched_base(uint8_t* &in, uint8_t first, int64_t* &out) {
+        // printf("Decode PATCHED BASE\n");
         const uint8_t encoded_fbw = (first >> 1) & 0x1f;
         const uint8_t fbw = get_decoded_bit_width(encoded_fbw);
         const uint16_t len = ((static_cast<uint16_t>(first & 0x01) << 8) | read_byte(in)) + 1;
@@ -149,6 +153,7 @@ namespace rlev2 {
         const uint8_t pll = forth & 0x1f;
 
         const auto base  = read_long(in, bw);
+        printf("pw base: %ld\n", base);
 
         uint32_t consumed = 4 + 2; // 4 bytes header + 2 byte long
 
@@ -166,9 +171,12 @@ namespace rlev2 {
         for (uint8_t p=0; p<pll; ++p) {
             gap_idx += patch_list[p] >> pw;
             curr[gap_idx] |= static_cast<int64_t>(patch_list[p] & patch_mask) << fbw;
+
+            // printf("curr[gap_idx]: %ld\n", curr[gap_idx]);
         }
 
         for (uint16_t i=0; i<len; ++i) {
+            // printf("curr[i]: %ld\n",curr[i]);
             curr[i] += base;
         }
         return consumed;

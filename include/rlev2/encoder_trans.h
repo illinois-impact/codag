@@ -169,18 +169,18 @@ namespace rlev2 {
 
     __global__
     void block_encode_new_write(int64_t* in, const uint64_t in_n_bytes, 
-            uint8_t* out, col_len_t* col_len, blk_off_t* blk_off) {
+            uint8_t* out, col_len_t* acc_col_len, blk_off_t* blk_off) {
 
         uint32_t tid = threadIdx.x;
         uint32_t cid = blockIdx.x;
 
         int64_t in_start_limit = min((cid + 1) * CHUNK_SIZE, in_n_bytes) / sizeof(int64_t);
-        int64_t in_start = cid * CHUNK_SIZE / sizeof(int64_t) + tid * READ_UNIT;
+        int64_t in_start = cid * CHUNK_SIZE / sizeof(int64_t) + tid * ENCODE_UNIT;
 
         //TODO: Make this more intelligent
         // uint8_t* out_4B = blk_off[cid] - blk_off[0] + WRITE_UNIT * tid;
 
-        uint32_t write_off =  blk_off[cid] + (tid == 0 ? 0 : col_len[tid - 1]);
+        uint32_t write_off =  (cid + tid == 0) ? 0 : acc_col_len[cid * BLK_SIZE + tid - 1];
         // printf("thread %d write offset %u\n", tid, write_off);
 
         uint8_t* out_4B = out + write_off;
@@ -206,7 +206,7 @@ namespace rlev2 {
                 read_unit = 0;
                 in_start += ENCODE_UNIT * BLK_SIZE;
             }
-            // if (tid == 0) printf("%lu read %ld\n", tid, val);
+            // if (tid == 0) printf("thread %u read %ld\n", tid, val);
             if (num_literals == 0) {
                 literals[num_literals ++] = val;
                 fix_runlen = 1;
@@ -314,14 +314,37 @@ namespace rlev2 {
             }
         }
 
+        // if (cid == 1 && tid == 0) {
+        //     for (int i=0; i<acc_col_len[0]; ++i) {
+        //         printf("chunk 1 thread 0 writes %x\n", info.output[i]);
+        //     }
+        // }
+
         // printf("thread %d write %u bytes\n", tid, info.potision);
     }
 
     __global__ 
-    void tranpose_col_len(uint8_t* in_col_len, col_len_t *col_len, blk_off_t *blk_off, uint8_t* out_col_len) {
+    void tranpose_col_len(uint8_t* in, col_len_t *acc_col_len, blk_off_t *blk_off, uint8_t* out) {
         uint32_t tid = threadIdx.x;
         uint32_t cid = blockIdx.x;
 
+        uint64_t in_idx = (cid + tid == 0) ? 0 : acc_col_len[cid * BLK_SIZE + tid - 1];
+        uint64_t out_idx = blk_off[cid] + tid * DECODE_UNIT;
+        int64_t out_bytes = acc_col_len[cid * BLK_SIZE + tid] - ((cid + tid == 0) ? 0 : acc_col_len[cid * BLK_SIZE + tid - 1]);
+
+        while (out_bytes > 0) {
+            auto mask = __activemask();
+
+            for (int i=0; i<DECODE_UNIT; ++i) {
+                out[out_idx + i] = in[in_idx ++];
+            }
+            
+            auto res = __popc(mask);
+            out_idx += DECODE_UNIT * res;
+            out_bytes -= DECODE_UNIT;
+
+            __syncwarp(mask);
+        }
         
     }
 
@@ -333,7 +356,7 @@ namespace rlev2 {
         out_n_chunks = n_chunks;
         
         int64_t *d_in;
-        uint8_t *d_out;
+        uint8_t *d_out, *d_out_transpose;
         col_len_t *d_col_len, *d_acc_col_len; //accumulated col len 
         blk_off_t *d_blk_off;
         
@@ -367,6 +390,7 @@ namespace rlev2 {
                             d_out, d_acc_col_len,  d_blk_off);
 	    cuda_err_chk(cudaDeviceSynchronize()); 
 
+        
         col_len = new col_len_t[n_chunks * BLK_SIZE];
 	    cuda_err_chk(cudaMemcpy(col_len, d_col_len, sizeof(col_len_t) * BLK_SIZE * n_chunks, cudaMemcpyDeviceToHost));
 
@@ -375,7 +399,14 @@ namespace rlev2 {
 
         out_n_bytes = blk_off[n_chunks];
         out = new uint8_t[out_n_bytes];
-	    cuda_err_chk(cudaMemcpy(out, d_out, out_n_bytes, cudaMemcpyDeviceToHost));
+        blk_off[n_chunks] = in_n_bytes; //use last index of blk_off to store file size.
+        
+        cuda_err_chk(cudaMalloc(&d_out_transpose, out_n_bytes));
+        tranpose_col_len<<<n_chunks, BLK_SIZE>>>(d_out, d_acc_col_len, d_blk_off, d_out_transpose);
+	    cuda_err_chk(cudaDeviceSynchronize()); 
+
+
+	    cuda_err_chk(cudaMemcpy(out, d_out_transpose, out_n_bytes, cudaMemcpyDeviceToHost));
 
 	    // uint64_t padded_out_size = blk_off[n_chunks - 1];
         
@@ -399,6 +430,7 @@ namespace rlev2 {
 
 	    cuda_err_chk(cudaFree(d_in));
 	    cuda_err_chk(cudaFree(d_out));
+	    cuda_err_chk(cudaFree(d_out_transpose));
 	    cuda_err_chk(cudaFree(d_col_len));
 	    cuda_err_chk(cudaFree(d_acc_col_len));
 	    cuda_err_chk(cudaFree(d_blk_off));

@@ -4,7 +4,6 @@
 #include "utils.h"
 #include <stdio.h>
 
-#define WRITE_OFFSET 1
 #define DEBUG
 
 namespace rlev2 {
@@ -54,12 +53,6 @@ namespace rlev2 {
 
 		uint8_t bw, pw, pgw, pll, patch_gap; // for patched base encoding
 
- //THIS SHOULD BE EQUIVALENT TO Encoder's read.
-#define write_varint(i) { \
-	*out_8B = i; \
-	out_8B += BLK_SIZE; \
-}
-
 	// printf("thread %d write %ld\n", tid, i); \
 
 		auto read_byte = [&]() {
@@ -68,6 +61,15 @@ namespace rlev2 {
 			used_bytes += 1;
 			input_buffer_head = (input_buffer_head + 1) % INPUT_BUFFER_SIZE;
 			return ret;
+		};
+
+		auto write_int = [&](int64_t i) {
+if (cid == 0 && tid == 0) {
+printf("chunk %u thread 0 write %ld(%lu)\n", cid, i, out_8B - out);
+}
+			*out_8B = i; 
+			out_8B += BLK_SIZE; 
+
 		};
 
 		// by default, lambda captures what was referecnes in lambda
@@ -97,7 +99,7 @@ namespace rlev2 {
 		};
 
 		auto read_longs = [&](uint8_t fbw) {
-			while (curr_len > 0 && (input_buffer_count || bits_left)) {
+			while (curr_len > 0 && (bits_left)) {
 				auto bits_left_to_read = fbw;
 				while (input_buffer_count && bits_left_to_read > bits_left) {
 					curr_64 <<= bits_left;
@@ -116,7 +118,7 @@ namespace rlev2 {
 						curr_64 |= (bits_left_over >> bits_left) & ((1 << bits_left_to_read) - 1);
 					}
 
-					write_varint(curr_64);
+					write_int(curr_64);
 					curr_len --;
 					curr_64 = 0;
 				}
@@ -129,17 +131,25 @@ namespace rlev2 {
 			// 	printf("used %u(%u) bytes\n", used_bytes, mychunk_size);
 			// }
 			// printf("loop\n");
-            // unsigned mask = __activemask();
+            auto mask = __activemask();
             bool read = read_count < mychunk_size;
-			// int res = __popc(__ballot_sync(mask, (read)));
+			int res = __popc(__ballot_sync(mask, (read)));
             if (read && input_buffer_count + 4 <= INPUT_BUFFER_SIZE) {
                 uint32_t* input_buffer_4B = (uint32_t *)(&(input_buffer[input_buffer_tail]));
 				input_buffer_4B[0] = in_4B[in_4B_off + tid];
+
+// if (cid == 1 && tid == 0) {
+// 	printf("chunk 1 thread 0 reads %x%x%x%x\n", 
+// 		input_buffer[input_buffer_head], 
+// 		input_buffer[input_buffer_head+1], 
+// 		input_buffer[input_buffer_head+2], 
+// 		input_buffer[input_buffer_head+3]);
+// }
 				input_buffer_tail = (input_buffer_tail + 4) % INPUT_BUFFER_SIZE;
 				input_buffer_count += 4;
 				read_count += 4;
 		
-				in_4B_off += 1; //TODO: this should be block offset
+				in_4B_off += res; 
             } 
 
 			if (!read_first) {
@@ -162,7 +172,7 @@ namespace rlev2 {
 					auto cnt = (first_byte & 0x07) + MINIMUM_REPEAT;
 					// printf("write %ld %u times\n", curr_64, cnt);
 					while (cnt-- > 0) {
-						write_varint(curr_64);
+						write_int(curr_64);
 					}
 				}
 				read_first = false;
@@ -176,9 +186,15 @@ namespace rlev2 {
 					bits_left = 0;
 					bits_left_over = 0;
 					curr_64 = 0;
+#ifdef DEBUG
+if (tid + cid == 0) printf("HEADER_DIRECT: %d len of ints\n", curr_len);
+#endif
 				}
 				read_longs(curr_fbw);
-				if (curr_len == 0) {
+				if (curr_len <= 0) {
+#ifdef DEBUG
+if (curr_len < 0) printf("HEADER_DIRECT: this line should not occured\n");
+#endif
 					read_first = false; read_second = false;
 				}
 			}	break;
@@ -194,14 +210,31 @@ namespace rlev2 {
 					dal_read_base = false;
 				}
 
-				// TODO: double check whether curr_fbw represent base length or delta length 
-				if (!dal_read_base && input_buffer_count >= 2 * curr_fbw / 8) {//TODO: should be min(fbw, 8)
+				//curr_fbw is delta bits.
+				if (!dal_read_base && (input_buffer_count >= 8 + curr_fbw || !read)) {//TODO: should be min(fbw, 8)
+// #ifdef DEBUG
+// if (tid == 0) {
+// printf("left to read base %d\n", input_buffer_count);
+// }
+// #endif
 					base_val = read_uvarint();
+// #ifdef DEBUG
+// if (tid == 0) {
+// printf("left to read delta %d\n", input_buffer_count);
+// }
+// #endif
 					base_delta = read_svarint();
 					
-					write_varint(base_val);
+					write_int(base_val);
 					base_val += base_delta;
-					write_varint(base_val);
+					write_int(base_val);
+
+// #ifdef DEBUG
+// if (tid == 0) {
+// printf("thread 0 base: %ld\n", base_val);
+// printf("thread 0 delta: %ld\n", base_delta);
+// }
+// #endif
 
 					base_out = out_8B;
 
@@ -218,16 +251,14 @@ namespace rlev2 {
 						// fixed delta encoding
 						while (curr_len > 0) {
 							base_val += base_delta;
-							write_varint(base_val);
+							write_int(base_val);
 							curr_len --;
 						}
 					}
 
 					if (curr_len <= 0) {
 #ifdef DEBUG
-						if (curr_len < 0) {
-							printf("thread %d is wrong with currlen < 0\n", tid);
-						}
+if (curr_len < 0) printf("HEADER_DELTA: this line should not occured\n");
 #endif
 						if (((first_byte >> 1) & 0x1f) != 0) {
 							if (base_delta > 0) {
@@ -303,9 +334,9 @@ namespace rlev2 {
 								curr_64 |= (bits_left_over >> bits_left) & ((1 << bits_left_to_read) - 1);
 							}
 
-							// write_varint(curr_64);
+							// write_int(curr_64);
 							patch_gap += curr_64 >> pw;
-							base_out[patch_gap * WRITE_OFFSET] |= static_cast<int64_t>(curr_64 & patch_mask) << curr_fbw;
+							base_out[patch_gap * BLK_SIZE] |= static_cast<int64_t>(curr_64 & patch_mask) << curr_fbw;
 
 
 							pll --;
@@ -315,7 +346,7 @@ namespace rlev2 {
 					if (pll == 0) {
 						while (base_out < out_8B) {
 							*base_out += base_val;
-							base_out += WRITE_OFFSET;
+							base_out += BLK_SIZE;
 						}
 						read_first = false; read_second = false;
 					}
@@ -338,9 +369,9 @@ namespace rlev2 {
 			// 	break;
 
 			// }
-			// break; //BREAK AFTER ONE ITER [DEL]
+			// if (read_count >= 16) break; //BREAK AFTER ONE ITER [DEL]
         }
-#undef write_varint
+#undef write_int
 		
 
     }
@@ -357,8 +388,13 @@ namespace rlev2 {
 		int64_t *d_out;
 		blk_off_t *d_blk_off;
 		col_len_t *d_col_len;
+
+		auto exp_out_n_bytes = blk_off[n_chunks];
+		out_n_bytes = exp_out_n_bytes;
+
+
 		cuda_err_chk(cudaMalloc(&d_in, in_n_bytes));
-		cuda_err_chk(cudaMalloc(&d_out, n_chunks * CHUNK_SIZE * sizeof(int64_t)));
+		cuda_err_chk(cudaMalloc(&d_out, exp_out_n_bytes));
 		cuda_err_chk(cudaMalloc(&d_blk_off, sizeof(blk_off_t) * n_chunks));
 		cuda_err_chk(cudaMalloc(&d_col_len, sizeof(col_len_t) * n_chunks * BLK_SIZE));
 			
@@ -366,29 +402,19 @@ namespace rlev2 {
 		cuda_err_chk(cudaMemcpy(d_blk_off, blk_off, sizeof(blk_off_t) * n_chunks, cudaMemcpyHostToDevice));
 		cuda_err_chk(cudaMemcpy(d_col_len, col_len, sizeof(col_len_t) * n_chunks * BLK_SIZE, cudaMemcpyHostToDevice));
 
-
-
+		
 		decompress_func_new1<<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, n_chunks,
 					d_blk_off, d_col_len,
 					d_out);
 		cuda_err_chk(cudaDeviceSynchronize());
 
 
-    	int64_t n_digits = CHUNK_SIZE * 2 / sizeof(int64_t);
-
-		out = new int64_t[n_digits];
-		cuda_err_chk(cudaMemcpy(out, d_out, n_digits * sizeof(int64_t), cudaMemcpyDeviceToHost));
+		out = new int64_t[exp_out_n_bytes / sizeof(int64_t)];
+		cuda_err_chk(cudaMemcpy(out, d_out, exp_out_n_bytes, cudaMemcpyDeviceToHost));
 		
-
-
-		printf("total out should be: %ld\n", n_digits);
-		for (int i=0; i<n_digits; ++i) {
-			if (out[i] != 1) {
-				printf("===========wring at %d\n", i);
-				break;
-			}
+		for (int i=0; i<128; ++i) {
+			printf("out[%d]: %ld\n", i, out[i]);
 		}
-
 
 
 		cuda_err_chk(cudaFree(d_in));

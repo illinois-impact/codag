@@ -12,9 +12,9 @@ void test(int64_t ll[], uint8_t exp[], int64_t in_n_bytes, int64_t out_exp_bytes
     uint16_t chunks = *((uint16_t*)out);
     const auto base = sizeof(uint32_t) + chunks * sizeof(uint64_t) + sizeof(uint64_t);
 
-    for (int i=0; i<out_exp_bytes; ++i) {
-        // printf("out[%d]: %x\n", i, out[base + i]);
-        assert(exp[i] == out[base + i]);
+    for (int i=0; i<128; ++i) {
+        // printf("out[%d]: %ld\n", i, out[base + i]);
+        // assert(exp[i] == out[base + i]);
     }
     // return;
 
@@ -25,8 +25,15 @@ void test(int64_t ll[], uint8_t exp[], int64_t in_n_bytes, int64_t out_exp_bytes
     // printf("encoded: %lu\n", in_n_bytes);
     // printf("decoded: %lu\n", decode_bytes);
 
-    for (int i=0; i<n_digits; ++i) {
-        // printf("out[%d]: %ld\n", i, decoded[i]);
+    for (int i=0; i<20; ++i) {
+        printf("decoded[%d]: %ld\n", i, decoded[i]);
+    }
+
+    for (int i=0; i<20; ++i) {
+        if (decoded[i] != ll[i]) {
+            printf("wrong at %d\n", i);
+            break;
+        }
         assert(decoded[i] == ll[i]);
     }
     delete[] decoded;
@@ -61,9 +68,15 @@ void test_DELTA() {
 }
 
 void test_DELTA2() {
-    int64_t ll[150];
-    for (int i=0; i<150; ++i) {
-        ll[i] = 1;
+    int64_t n_digits = 20;
+
+    int64_t ll[n_digits];
+    for (int i=0; i<n_digits; ++i) {
+        ll[i] = i + 768;
+
+        if ((i + 768) % 776 == 0)  {
+            ll[i] = 24104;
+        }
     }
     uint8_t exp[] = {0xc0, 0x7f, 0x1, 0, 0xc0, 0x15, 0x1, 0};
    
@@ -82,10 +95,10 @@ void test_SHORTREPEAT() {
 }
 
 int main() {
-    test_DELTA();
+    // test_DELTA();
     test_DELTA2();
-    test_SHORTREPEAT();
-    test_DIRECT();
-    test_PB();
+    // test_SHORTREPEAT();
+    // test_DIRECT();
+    // test_PB();
     return 0;
 }
