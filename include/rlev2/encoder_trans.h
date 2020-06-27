@@ -161,7 +161,11 @@ namespace rlev2 {
             // Block alignment should be 4(decoder's READ_UNIT) * 32 
             blk_len = (blk_len + 127) / 128 * 128;
             blk_off[cid + 1] = blk_len;
+
         }
+
+        // printf("thread %d should write %u bytes\n", tid, info.potision);
+
         // *offset = info.potision;
         // printf("%lu: %x\n", tid, info.output[0]);
         // printf("%ld: %u\n", tid, info.potision);
@@ -321,10 +325,18 @@ namespace rlev2 {
         // }
 
         // printf("thread %d write %u bytes\n", tid, info.potision);
+
+        if (tid == ERR_THREAD) {
+            for (int i=0; i<(tid == 0 ? acc_col_len[0] : (acc_col_len[ERR_THREAD] - acc_col_len[ERR_THREAD-1])); i+=4) {
+                printf("chunk 0 thread %d writes %x%x%x%x\n", 
+                    ERR_THREAD, info.output[i], info.output[i+1], info.output[i+2], info.output[i+3]);
+
+            }
+        }
     }
 
     __global__ 
-    void tranpose_col_len(uint8_t* in, col_len_t *acc_col_len, blk_off_t *blk_off, uint8_t* out) {
+    void tranpose_col_len(uint8_t* in, col_len_t *acc_col_len, col_len_t *col_len, blk_off_t *blk_off, uint8_t* out) {
         uint32_t tid = threadIdx.x;
         uint32_t cid = blockIdx.x;
 
@@ -332,14 +344,48 @@ namespace rlev2 {
         uint64_t out_idx = blk_off[cid] + tid * DECODE_UNIT;
         int64_t out_bytes = acc_col_len[cid * BLK_SIZE + tid] - ((cid + tid == 0) ? 0 : acc_col_len[cid * BLK_SIZE + tid - 1]);
 
-        while (out_bytes > 0) {
+        uint32_t* in_4B = (uint32_t *)(&(in[in_idx]));
+        uint32_t in_4B_idx = in_idx;
+        uint32_t* out_4B = (uint32_t *)(&(out[blk_off[cid]]));
+        uint32_t out_4B_idx = 0;
+        int iter = 0;
+        while (true) {
             auto mask = __activemask();
+            auto res = __popc(mask);
 
+        // if (tid == ERR_THREAD) {
+        //     printf(" active threads at %dth iteration: %d\n", iter, res);
+        // }
+
+            
+            // iter ++;
+            // out_id// int res = 0;
+            // for (int i=0; i<32; ++i) {
+            //     if (col_len[cid * BLK_SIZE + i] > iter * DECODE_UNIT) res ++;
+            // }x += DECODE_UNIT * res;
+
+            // out_4B[out_4B_idx + tid] = in_4B[in_4B_idx];
             for (int i=0; i<DECODE_UNIT; ++i) {
                 out[out_idx + i] = in[in_idx ++];
             }
+            // if (tid == ERR_THREAD) {
+                printf("thread %d out4b at %lu: %x%x%x%x\n\n", tid, out_idx, out[out_idx], 
+                out[out_idx+1], 
+                out[out_idx+2], 
+                out[out_idx + 3]);
+            // }
+
+            // if (tid == ERR_THREAD) {
+            //     printf("out4b at %u: %x\n", out_4B_idx, in_4B[in_4B_idx]);
+            // }
+            // Seems to not work as expected
+            // auto mask = __activemask();
+            // auto res = __popc(mask);
+
             
-            auto res = __popc(mask);
+            out_4B_idx += res;
+            in_4B_idx ++;
+
             out_idx += DECODE_UNIT * res;
             out_bytes -= DECODE_UNIT;
 
@@ -348,6 +394,55 @@ namespace rlev2 {
         
     }
 
+
+    __global__
+    void tranpose_col_len_single(uint8_t* in, col_len_t *acc_col_len, col_len_t *col_len, blk_off_t *blk_off, uint8_t* out) {
+        uint32_t cid = blockIdx.x;
+
+        // uint64_t in_idx = (cid + tid == 0) ? 0 : acc_col_len[cid * BLK_SIZE + tid - 1];
+        // uint64_t out_idx = blk_off[cid] + tid * DECODE_UNIT;
+        // int64_t out_bytes = acc_col_len[cid * BLK_SIZE + tid] - ((cid + tid == 0) ? 0 : acc_col_len[cid * BLK_SIZE + tid - 1]);
+
+        // uint32_t* in_4B = (uint32_t *)(&(in[in_idx]));
+        // uint32_t in_4B_idx = in_idx;
+        // uint32_t* out_4B = (uint32_t *)(&(out[blk_off[cid]]));
+        // uint32_t out_4B_idx = 0;
+        // int iter = 0;
+
+        col_len_t loc_col_len[32];
+        memcpy(loc_col_len, col_len + cid * BLK_SIZE, 32 * sizeof(col_len_t));
+
+        int res, iter = 0;
+        uint64_t nxt_out_idx, cur_out_idx = 0;
+        // More space should be saved. TODO: 
+        uint64_t curr_iter_off = 0;
+        uint64_t curr_iter_out = 0;
+        uint64_t out_idx = 0;
+        while (true) {
+            int res = 0;
+            for (int tid=0; tid<32; ++tid) {
+                if (loc_col_len[tid] > curr_iter_off) {
+                    auto tidx = ((cid + tid == 0) ? 0 : acc_col_len[cid * BLK_SIZE + tid - 1]) + curr_iter_off;
+                    
+                    for (int i=0; i<DECODE_UNIT; ++i) {
+                        out[out_idx + i] = in[tidx + i];
+                    }
+        if (tid == ERR_THREAD) 
+        printf("thread %d out4b at %lu: %x%x%x%x\n", tid, out_idx, out[out_idx], 
+        out[out_idx+1], 
+        out[out_idx+2], 
+        out[out_idx + 3]);
+
+                    out_idx += DECODE_UNIT;
+                    res ++;
+                }
+            }
+            if (res == 0) break;
+            curr_iter_off += DECODE_UNIT;
+            // nxt_out_idx = cur_out_idx + res * 4;
+            
+        }
+    }
 
     __host__
     void compress_gpu_transpose(const int64_t* const in, const uint64_t in_n_bytes, uint8_t*& out, uint64_t& out_n_bytes,
@@ -402,7 +497,7 @@ namespace rlev2 {
         blk_off[n_chunks] = in_n_bytes; //use last index of blk_off to store file size.
         
         cuda_err_chk(cudaMalloc(&d_out_transpose, out_n_bytes));
-        tranpose_col_len<<<n_chunks, BLK_SIZE>>>(d_out, d_acc_col_len, d_blk_off, d_out_transpose);
+        tranpose_col_len_single<<<n_chunks, 1>>>(d_out, d_acc_col_len, d_col_len, d_blk_off, d_out_transpose);
 	    cuda_err_chk(cudaDeviceSynchronize()); 
 
 

@@ -64,9 +64,9 @@ namespace rlev2 {
 		};
 
 		auto write_int = [&](int64_t i) {
-if (cid == 0 && tid == 0) {
-printf("chunk %u thread 0 write %ld(%lu)\n", cid, i, out_8B - out);
-}
+// if (cid == 0 && tid == 0) {
+// printf("chunk %u thread 0 write %ld(%lu)\n", cid, i, out_8B - out);
+// }
 			*out_8B = i; 
 			out_8B += BLK_SIZE; 
 
@@ -99,8 +99,14 @@ printf("chunk %u thread 0 write %ld(%lu)\n", cid, i, out_8B - out);
 		};
 
 		auto read_longs = [&](uint8_t fbw) {
-			while (curr_len > 0 && (bits_left)) {
-				auto bits_left_to_read = fbw;
+			// int max_iter = 10, iter = 0;
+			while (curr_len > 0 && (input_buffer_count || bits_left)) {
+// if (tid == 0) printf("(currlen)input_count(bits_left) (%d)%u(%u)\n", curr_len, input_buffer_count, bits_left);
+// 				if (++iter > max_iter) {
+// 					printf("PATCHED BASE: this line should not acuur\n");
+// 					break;
+// 				}
+				int bits_left_to_read = fbw;
 				while (input_buffer_count && bits_left_to_read > bits_left) {
 					curr_64 <<= bits_left;
 					curr_64 |= bits_left_over & ((1 << bits_left) - 1);
@@ -121,10 +127,13 @@ printf("chunk %u thread 0 write %ld(%lu)\n", cid, i, out_8B - out);
 					write_int(curr_64);
 					curr_len --;
 					curr_64 = 0;
+				} else {
+					if (input_buffer_count == 0) break;
 				}
 			}
 		};
 
+// if (tid == ERR_THREAD) printf("thread %d chunk size: %lu\n", ERR_THREAD, mychunk_size);
 		// bits_left is for 3 other encoding schemes
         while (used_bytes < mychunk_size || curr_len > 0) {
 			// if (cid == 0 && tid == 0) {
@@ -133,18 +142,28 @@ printf("chunk %u thread 0 write %ld(%lu)\n", cid, i, out_8B - out);
 			// printf("loop\n");
             auto mask = __activemask();
             bool read = read_count < mychunk_size;
-			int res = __popc(__ballot_sync(mask, (read)));
+			auto res = __popc(__ballot_sync(mask, (read)));
+
+			int left_active = 0;
+			for (int i=0; i<tid; ++i) {
+				if (read_count < col_len[cid * BLK_SIZE + i]) {
+					++left_active;
+				}
+			}
+// if (cid == 0 && tid == ERR_THREAD) {
+// printf("read active thread at %luth iter: %u(%d)\n",read_count / 4, res, left_active);
+// }
             if (read && input_buffer_count + 4 <= INPUT_BUFFER_SIZE) {
                 uint32_t* input_buffer_4B = (uint32_t *)(&(input_buffer[input_buffer_tail]));
-				input_buffer_4B[0] = in_4B[in_4B_off + tid];
+				input_buffer_4B[0] = in_4B[in_4B_off + left_active];  
 
-// if (cid == 1 && tid == 0) {
-// 	printf("chunk 1 thread 0 reads %x%x%x%x\n", 
-// 		input_buffer[input_buffer_head], 
-// 		input_buffer[input_buffer_head+1], 
-// 		input_buffer[input_buffer_head+2], 
-// 		input_buffer[input_buffer_head+3]);
-// }
+if (cid == 0 && tid == ERR_THREAD) {
+	printf("chunk %d thread %d reads at pos(%u) %x%x%x%x\n", cid, tid, (in_4B_off + left_active) * 4,
+		input_buffer[input_buffer_head], 
+		input_buffer[input_buffer_head+1], 
+		input_buffer[input_buffer_head+2], 
+		input_buffer[input_buffer_head+3]);
+}
 				input_buffer_tail = (input_buffer_tail + 4) % INPUT_BUFFER_SIZE;
 				input_buffer_count += 4;
 				read_count += 4;
@@ -190,6 +209,7 @@ printf("chunk %u thread 0 write %ld(%lu)\n", cid, i, out_8B - out);
 if (tid + cid == 0) printf("HEADER_DIRECT: %d len of ints\n", curr_len);
 #endif
 				}
+				
 				read_longs(curr_fbw);
 				if (curr_len <= 0) {
 #ifdef DEBUG
@@ -279,7 +299,7 @@ if (curr_len < 0) printf("HEADER_DELTA: this line should not occured\n");
 				}
 			}	break;
 			case HEADER_PACTED_BASE: {
-				// printf("======> case patched baes\n");
+// if (tid == 0) printf("======> case patched baes\n");
 
 				//TODO Try to guarantee there are at least 4 btyes to read (all headers)
 				uint8_t curr_fbw = get_decoded_bit_width((first_byte >> 1) & 0x1f);
@@ -303,17 +323,23 @@ if (curr_len < 0) printf("HEADER_DELTA: this line should not occured\n");
 
 					read_second = true;
 				}
+				
+				if (!read_second) break;
 
-				// TODO: double check whether curr_fbw represent base length or delta length 
-				if (!dal_read_base && input_buffer_count >= bw) {//TODO: should be min(fbw, 8)
+				if (!dal_read_base && input_buffer_count >= bw) {
 					base_val = read_long(bw);
 					base_out = out_8B;
 					dal_read_base = true;
 				}
+
+				if (!dal_read_base) break;
+
 				if (curr_len > 0) {
 					read_longs(curr_fbw);
+// if (tid == 0)  printf("curr_len after read longs: %d(%u)\n", curr_len,curr_fbw);
 				} else {
 					// process patched list
+// if (tid == 0) printf("======> process patch base	\n");
 					auto cfb = get_closest_bit(pw + pgw);
 					auto patch_mask = (static_cast<uint16_t>(1) << pw) - 1;
 					while (pll > 0 && (input_buffer_count || bits_left)) {
@@ -341,9 +367,12 @@ if (curr_len < 0) printf("HEADER_DELTA: this line should not occured\n");
 
 							pll --;
 							curr_64 = 0;
+						} else {
+							if (input_buffer_count == 0) break;
 						}
 					}
-					if (pll == 0) {
+					if (pll <= 0) {
+// if (pll < 0) printf("PACTHED BASE: this line should not appear\n");
 						while (base_out < out_8B) {
 							*base_out += base_val;
 							base_out += BLK_SIZE;
@@ -370,6 +399,7 @@ if (curr_len < 0) printf("HEADER_DELTA: this line should not occured\n");
 
 			// }
 			// if (read_count >= 16) break; //BREAK AFTER ONE ITER [DEL]
+			__syncwarp(mask);
         }
 #undef write_int
 		
@@ -380,6 +410,7 @@ if (curr_len < 0) printf("HEADER_DELTA: this line should not occured\n");
 	void decompress_gpu(const uint8_t *in, const uint64_t in_n_bytes, const uint64_t n_chunks,
 			blk_off_t *blk_off, col_len_t *col_len,
 			int64_t *&out, uint64_t &out_n_bytes) {
+		initialize_bit_maps();
 		printf("======> decompress kernerl\n");
 		// printf("======> n_chunks: %u\n", n_chunks);
 		// printf("======> in_n_bytes: %u\n", in_n_bytes);
@@ -412,7 +443,9 @@ if (curr_len < 0) printf("HEADER_DELTA: this line should not occured\n");
 		out = new int64_t[exp_out_n_bytes / sizeof(int64_t)];
 		cuda_err_chk(cudaMemcpy(out, d_out, exp_out_n_bytes, cudaMemcpyDeviceToHost));
 		
-		for (int i=0; i<128; ++i) {
+		
+		int p = 3840;
+		for (int i=p; i<p+92; ++i) {
 			printf("out[%d]: %ld\n", i, out[i]);
 		}
 

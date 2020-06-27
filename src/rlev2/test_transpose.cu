@@ -139,15 +139,15 @@ void test_encode_transpose() {
     //     }
     // }
 
-    int64_t n_digits = CHUNK_SIZE * 2 / sizeof(int64_t) ;
+    int64_t n_digits = CHUNK_SIZE / 4 / sizeof(int64_t) ;
 
     int64_t ll[n_digits];
     for (int i=0; i<n_digits; ++i) {
         ll[i] = i ;
 
-        // if (i % 775 == 0)  {
-        //     ll[i] = 24104;
-        // }
+        if (i % 775 == 0)  {
+            ll[i] = 24104;
+        }
     }
 
     uint8_t *out_ptr = nullptr;
@@ -156,7 +156,7 @@ void test_encode_transpose() {
     blk_off_t *blk_off;
     col_len_t *col_len;
 
-    int64_t *decompressed; 
+    int64_t *decompressed = nullptr; 
     uint64_t n_chunks, decompressed_bytes;
 
     rlev2::compress_gpu_transpose(ll, sizeof(ll), out_ptr, out_bytes,
@@ -170,7 +170,7 @@ void test_encode_transpose() {
     for (int i=0; i<n_digits; ++i) {
         if (ll[i] != decompressed[i]) {
             printf("failed at %d\n", i);
-            break;
+            // break;
         }
     }
 

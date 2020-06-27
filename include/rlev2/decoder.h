@@ -61,7 +61,7 @@ namespace rlev2 {
                 result |= (curByte >> bitsLeft) & ((1 << bitsLeftToRead) - 1);
             }
 
-            printf("data is %ld\n", result);
+            // printf("data is %ld\n", result);
             write_val(static_cast<int64_t>(result), data);
         }
 
