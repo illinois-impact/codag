@@ -181,6 +181,6 @@ inline void initialize_bit_maps() {
     cudaMemcpyToSymbol(device_decode_bit_map, &__BIT_WIDTH_DECODE_MAP, 32 * sizeof(uint8_t));
 }
 
-#define ERR_THREAD 21
+#define ERR_THREAD 3
 
 #endif

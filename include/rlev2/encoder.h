@@ -110,7 +110,7 @@ namespace rlev2 {
         uint8_t current = 0;
         for(uint32_t i=0; i <len; i++) {
             int64_t value = in[i];
-            // printf("pb write val: %ld(%u)\n", value,bitsLeft);
+            // printf("pb write val: %ld\n", value);
             uint32_t bitsToWrite = bits;
 
             while (bitsToWrite > bitsLeft) {
@@ -122,7 +122,7 @@ namespace rlev2 {
                 value &= (static_cast<uint64_t>(1) << bitsToWrite) - 1;
 
                 info.write_value(current);
-                // printf("write byte %x\n", info.output[info.potision - 1]);
+                // printf("write byte %x(%u)\n", info.output[info.potision - 1], bits);
                 current = 0;
                 bitsLeft = 8;
             }
@@ -168,6 +168,7 @@ namespace rlev2 {
     void preparePatchedBlob1(encode_info& info, patch_blob& pb) {
         // mask will be max value beyond which patch will be generated
         int64_t mask = static_cast<int64_t>(static_cast<uint64_t>(1) << pb.bits95p) - 1;
+        // printf("<<<<<<<<<<<<<=== pb95p %u\n", pb.bits95p);
         pb.patch_len = ceil(info.num_literals, static_cast<uint32_t>(20));
         pb.patch_width = get_closest_bit(pb.bits100p - pb.bits95p);
 
@@ -202,7 +203,8 @@ namespace rlev2 {
                 patchList[patchIdx ++] = patch;
 
                 // strip off the MSB to enable safe bit packing
-                info.literals[i] &= mask;
+                // info.literals[i] &= mask;
+                pb.reduced_literals[i] &= mask;
             }
         }
 
@@ -667,6 +669,10 @@ namespace rlev2 {
             }
         }
         *offset = info.potision;
+
+        // for (int i=0; i<info.potision; ++i) {
+        //     printf("write byte %x\n", info.output[i]);
+        // }
 
         // printf("%lu: %u\n", tid, info.potision);
     }

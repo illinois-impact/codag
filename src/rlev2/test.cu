@@ -25,9 +25,9 @@ void test(int64_t ll[], uint8_t exp[], int64_t in_n_bytes, int64_t out_exp_bytes
     // printf("encoded: %lu\n", in_n_bytes);
     // printf("decoded: %lu\n", decode_bytes);
 
-    for (int i=0; i<n_digits; ++i) {
-        printf("decoded[%d]: %ld\n", i, decoded[i]);
-    }
+    // for (int i=0; i<n_digits; ++i) {
+    //     printf("decoded[%d]: %ld\n", i, decoded[i]);
+    // }
 
     for (int i=0; i<n_digits; ++i) {
         if (decoded[i] != ll[i]) {
@@ -68,15 +68,15 @@ void test_DELTA() {
 }
 
 void test_DELTA2() {
-    int64_t n_digits = 1024;
+    int64_t n_digits = 128;
 
     int64_t ll[n_digits];
     int acc = 0;
 
     for (int i=0; i<n_digits; ++i) {
-        ll[i] = i + acc;
+        ll[i] = i + acc + 15;
         acc += 32;
-        if ((i) % 776 == 0)  {
+        if (i % 117 == 0)  {
             ll[i] = 24104;
         }
     }
@@ -97,10 +97,10 @@ void test_SHORTREPEAT() {
 }
 
 int main() {
-    // test_DELTA();
+    test_DELTA();
     test_DELTA2();
-    // test_SHORTREPEAT();
-    // test_DIRECT();
-    // test_PB();
+    test_SHORTREPEAT();
+    test_DIRECT();
+    test_PB();
     return 0;
 }

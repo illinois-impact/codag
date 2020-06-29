@@ -64,9 +64,6 @@ namespace rlev2 {
 		};
 
 		auto write_int = [&](int64_t i) {
-// if (cid == 0 && tid == 0) {
-// printf("chunk %u thread 0 write %ld(%lu)\n", cid, i, out_8B - out);
-// }
 			*out_8B = i; 
 			out_8B += BLK_SIZE; 
 
@@ -157,13 +154,13 @@ namespace rlev2 {
                 uint32_t* input_buffer_4B = (uint32_t *)(&(input_buffer[input_buffer_tail]));
 				input_buffer_4B[0] = in_4B[in_4B_off + left_active];  
 
-if (cid == 0 && tid == ERR_THREAD) {
-	printf("chunk %d thread %d reads at pos(%u) %x%x%x%x\n", cid, tid, (in_4B_off + left_active) * 4,
-		input_buffer[input_buffer_head], 
-		input_buffer[input_buffer_head+1], 
-		input_buffer[input_buffer_head+2], 
-		input_buffer[input_buffer_head+3]);
-}
+// if (cid == 0 && tid == ERR_THREAD) {
+// 	printf("chunk %d thread %d reads at pos(%u) %x%x%x%x\n", cid, tid, (in_4B_off + left_active) * 4,
+// 		input_buffer[input_buffer_head], 
+// 		input_buffer[input_buffer_head+1], 
+// 		input_buffer[input_buffer_head+2], 
+// 		input_buffer[input_buffer_head+3]);
+// }
 				input_buffer_tail = (input_buffer_tail + 4) % INPUT_BUFFER_SIZE;
 				input_buffer_count += 4;
 				read_count += 4;
@@ -330,6 +327,9 @@ if (curr_len < 0) printf("HEADER_DELTA: this line should not occured\n");
 					base_val = read_long(bw);
 					base_out = out_8B;
 					dal_read_base = true;
+if (cid == 0 && tid == ERR_THREAD) {
+	printf("==== PB thread %u read and base int %ld\n", tid, base_val);
+}
 				}
 
 				if (!dal_read_base) break;
@@ -444,10 +444,10 @@ if (curr_len < 0) printf("HEADER_DELTA: this line should not occured\n");
 		cuda_err_chk(cudaMemcpy(out, d_out, exp_out_n_bytes, cudaMemcpyDeviceToHost));
 		
 		
-		int p = 3840;
-		for (int i=p; i<p+92; ++i) {
-			printf("out[%d]: %ld\n", i, out[i]);
-		}
+		// int p = 3840;
+		// for (int i=p; i<p+92; ++i) {
+		// 	printf("out[%d]: %ld\n", i, out[i]);
+		// }
 
 
 		cuda_err_chk(cudaFree(d_in));

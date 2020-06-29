@@ -326,13 +326,13 @@ namespace rlev2 {
 
         // printf("thread %d write %u bytes\n", tid, info.potision);
 
-        if (tid == ERR_THREAD) {
-            for (int i=0; i<(tid == 0 ? acc_col_len[0] : (acc_col_len[ERR_THREAD] - acc_col_len[ERR_THREAD-1])); i+=4) {
-                printf("chunk 0 thread %d writes %x%x%x%x\n", 
-                    ERR_THREAD, info.output[i], info.output[i+1], info.output[i+2], info.output[i+3]);
+        // if (cid == 0 && tid == ERR_THREAD) {
+        //     for (int i=0; i<(tid == 0 ? acc_col_len[0] : (acc_col_len[ERR_THREAD] - acc_col_len[ERR_THREAD-1])); i+=4) {
+        //         printf("chunk 0 thread %d writes %x%x%x%x\n", 
+        //             ERR_THREAD, info.output[i], info.output[i+1], info.output[i+2], info.output[i+3]);
 
-            }
-        }
+        //     }
+        // }
     }
 
     __global__ 
@@ -417,7 +417,7 @@ namespace rlev2 {
         // More space should be saved. TODO: 
         uint64_t curr_iter_off = 0;
         uint64_t curr_iter_out = 0;
-        uint64_t out_idx = 0;
+        uint64_t out_idx = blk_off[cid];
         while (true) {
             int res = 0;
             for (int tid=0; tid<32; ++tid) {
@@ -427,11 +427,11 @@ namespace rlev2 {
                     for (int i=0; i<DECODE_UNIT; ++i) {
                         out[out_idx + i] = in[tidx + i];
                     }
-        if (tid == ERR_THREAD) 
-        printf("thread %d out4b at %lu: %x%x%x%x\n", tid, out_idx, out[out_idx], 
-        out[out_idx+1], 
-        out[out_idx+2], 
-        out[out_idx + 3]);
+        // if (cid == 0 && tid == ERR_THREAD) 
+        // printf("thread %d out4b at %lu: %x%x%x%x\n", tid, out_idx, out[out_idx], 
+        // out[out_idx+1], 
+        // out[out_idx+2], 
+        // out[out_idx + 3]);
 
                     out_idx += DECODE_UNIT;
                     res ++;
@@ -447,6 +447,7 @@ namespace rlev2 {
     __host__
     void compress_gpu_transpose(const int64_t* const in, const uint64_t in_n_bytes, uint8_t*& out, uint64_t& out_n_bytes,
                     uint64_t& out_n_chunks, blk_off_t *&blk_off, col_len_t *&col_len) {
+        printf("======> compressing\n");
         uint32_t n_chunks = (in_n_bytes - 1) / CHUNK_SIZE + 1;
         out_n_chunks = n_chunks;
         
@@ -458,8 +459,8 @@ namespace rlev2 {
         // printf("input chunk: %lu\n", CHUNK_SIZE);
         // printf("output chunk: %lu\n", n_chunks * OUTPUT_CHUNK_SIZE);
 
-        printf("in_n_bytes: %lu\n", in_n_bytes);
-        printf("n_chunks: %u\n", n_chunks);
+        // printf("in_n_bytes: %lu\n", in_n_bytes);
+        // printf("n_chunks: %u\n", n_chunks);
 
 	    cuda_err_chk(cudaMalloc(&d_in, in_n_bytes));
         cuda_err_chk(cudaMalloc(&d_out, n_chunks * OUTPUT_CHUNK_SIZE));

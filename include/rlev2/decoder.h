@@ -36,7 +36,7 @@ namespace rlev2 {
         return 1 + num_bytes;
     }
 
-    __host__ __device__ uint32_t readLongs(uint8_t*& in, int64_t*& data, uint64_t len, uint64_t fb) {
+    __host__ __device__ uint32_t readLongs(uint8_t*& in, int64_t*& data, uint64_t len, uint8_t fb) {
         uint32_t ret = 0;
 
         uint64_t bitsLeft = 0;
@@ -50,6 +50,7 @@ namespace rlev2 {
                 result |= curByte & ((1 << bitsLeft) - 1);
                 bitsLeftToRead -= bitsLeft;
                 curByte = read_byte(in);
+                // printf("read byte %x\n", curByte);
                 ++ ret;
                 bitsLeft = 8;
             }
@@ -61,7 +62,7 @@ namespace rlev2 {
                 result |= (curByte >> bitsLeft) & ((1 << bitsLeftToRead) - 1);
             }
 
-            // printf("data is %ld\n", result);
+            // printf("pb read int %ld(%lu)\n", result, fb);
             write_val(static_cast<int64_t>(result), data);
         }
 
@@ -139,7 +140,7 @@ namespace rlev2 {
     }
 
     __host__ __device__ uint32_t decode_patched_base(uint8_t* &in, uint8_t first, int64_t* &out) {
-        // printf("Decode PATCHED BASE\n");
+        // printf("Decode PATCHED BASE =>>>>>>>>>>>>>>>>>>>>>.\n\n");
         const uint8_t encoded_fbw = (first >> 1) & 0x1f;
         const uint8_t fbw = get_decoded_bit_width(encoded_fbw);
         const uint16_t len = ((static_cast<uint16_t>(first & 0x01) << 8) | read_byte(in)) + 1;
@@ -153,7 +154,7 @@ namespace rlev2 {
         const uint8_t pll = forth & 0x1f;
 
         const auto base  = read_long(in, bw);
-        printf("pw base: %ld\n", base);
+        // printf("pw base: %ld\n", base);
 
         uint32_t consumed = 4 + 2; // 4 bytes header + 2 byte long
 
