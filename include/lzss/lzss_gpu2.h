@@ -108,7 +108,7 @@ namespace lzss {
     }
 
 
-	__device__ void decompress_func_new(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const blk_off, const uint64_t* const col_len, const uint8_t* const col_map) {
+	__device__ void decompress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const blk_off, const uint64_t* const col_len, const uint8_t* const col_map) {
 		uint8_t hist[HIST_SIZE] = {DEFAULT_CHAR};
 		uint64_t hist_head = 0;
 		uint64_t hist_count = 0;
@@ -322,7 +322,7 @@ namespace lzss {
 
 
 
-	__global__ void compress_init_func_new(const uint8_t* const in, const uint64_t in_n_bytes,  
+	__global__ void compress_init_func(const uint8_t* const in, const uint64_t in_n_bytes,
 					   			  const uint64_t in_chunk_size, const uint64_t out_chunk_size, const uint64_t n_chunks, 
 					              uint64_t* col_len, uint64_t* blk_offset){
 
@@ -1556,338 +1556,13 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	
     }
     
-    __host__ __device__ void compress_func_var_read(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t in_chunk_size, const uint64_t out_chunk_size, const uint64_t n_chunks, uint64_t* lens, const uint64_t tid) {
-	if (tid < n_chunks) {
-	    uint64_t rem = in_n_bytes % in_chunk_size;
-	    uint64_t my_chunk_size = ((tid == (n_chunks - 1)) && (rem)) ? rem : in_chunk_size;
-	    uint64_t in_start_idx = tid * in_chunk_size;
-	    uint64_t out_start_idx = tid * out_chunk_size;
 
-	    uint8_t hist[HIST_SIZE] = {DEFAULT_CHAR};
-	    uint8_t lookahead[LOOKAHEAD_SIZE];
-	    uint32_t hist_head  = 0;
-	    uint32_t hist_count = 0;
-	    uint32_t lookahead_head = 0;
-	    uint32_t lookahead_count = 0;
-	    uint64_t consumed_bytes = 0;
-	    uint64_t out_bytes = 1;
-	    uint64_t cur_header_byte_pos = 0;
-	    uint8_t header_byte = 0;
-	    uint8_t blocks = 0;
-	    uint64_t c = 0;
-
-	    uint64_t used_bytes = 0;
-	    uint32_t lookahead_head_4 = 0;
-	    uint32_t lookahead_count_4 =0;
-	    const uint32_t* const in_4 = (const uint32_t*) (in + in_start_idx);
-	    uint32_t* lookahead_4 = ( uint32_t*) lookahead;
-	    uint32_t consumed_bytes_4 = 0;
-	    uint32_t lookahead_head_mod = 0;
-	    while (used_bytes < my_chunk_size) {
-		
-		//fill up lookahead buffer
-		while ((lookahead_count_4 < LOOKAHEAD_UNITS) && (consumed_bytes < my_chunk_size))  {
-		    lookahead_4[(lookahead_head_4 + (lookahead_count_4++)) % LOOKAHEAD_UNITS] =
-			in_4[(consumed_bytes_4++)];
-		    consumed_bytes += READ_UNITS;
-		    lookahead_count += READ_UNITS;
-		    
-		    if (consumed_bytes > my_chunk_size) {
-			uint32_t diff = consumed_bytes - my_chunk_size;
-			consumed_bytes -= diff;
-			lookahead_count -= diff;
-			break;
-		    }
-		}
-		//printf("Consumed: %llu\tChunk Size: %llu\n", (unsigned long long) consumed_bytes, (unsigned long long) my_chunk_size);
-		uint32_t offset = 0;
-		uint32_t length = 0;
-		find_match(hist, hist_head, hist_count, lookahead, lookahead_head, lookahead_count, &offset, &length);
-		//if (tid == 0 && c < 5)
-		//	printf("HERE1: %c\t %llu\n", (char) lookahead[lookahead_head], (unsigned long long) c);
-		//no match
-		if (length == 0) {
-		    uint8_t v = lookahead[lookahead_head];
-		    out[out_start_idx + (out_bytes++)] = v;
-		    lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
-		    lookahead_count--;
-		    hist[(hist_head+hist_count)%HIST_SIZE] = v;
-		    hist_count += 1;
-		    if (hist_count > HIST_SIZE) {
-			hist_head = (hist_head + (1)) % HIST_SIZE;
-			hist_count = HIST_SIZE;
-		    }
-		    header_byte = (header_byte | (1 << blocks));
-
-		    //if ((tid == 0) && (out_bytes < 100))
-		    //    printf("b: %llu\t1: %c\t ub: %llu\n", (unsigned long long) out_bytes, (char)v, (unsigned long long) used_bytes);
-		    used_bytes++;
-		    lookahead_head_mod++;
-		    if (lookahead_head_mod == READ_UNITS) {
-			lookahead_head_mod = 0;
-			lookahead_head_4 = (lookahead_head_4 + 1) % LOOKAHEAD_UNITS;
-			lookahead_count_4--;
-			
-		    }
-		    
-		}
-		//match
-		else {
-		    uint64_t v = (offset << LENGTH_SIZE) | (length - MIN_MATCH_LENGTH);
-		    uint64_t v2 = v;
-		    for (size_t i = 0; i < (MIN_MATCH_LENGTH-1); i++) {
-			uint8_t k = v & 0x00FF;
-			out[out_start_idx + (out_bytes++)] = k;
-			//printf("k: %llu\n", (unsigned long long) k);
-			v >>= 8;
-		    }
-		    uint32_t hist_start = hist_head+hist_count;
-		    for (size_t i = 0; i < length; i++) {
-			uint8_t z = lookahead[(lookahead_head+i) % LOOKAHEAD_SIZE];
-			hist[(hist_start+i) % HIST_SIZE]= z;
-			//if ((tid == 0) && (out_bytes < 100))
-			//	printf("b: %llu\t1: %c\t ub: %llu\tleng: %llu\toffset: %llu\tj: %llu\tv: %p\n", (unsigned long long) out_bytes, (char)z, (unsigned long long) used_bytes, (unsigned long long) length, (unsigned long long) offset, (unsigned long long) i,v2);
-		    }
-		    
-		    lookahead_head = (lookahead_head + length) % LOOKAHEAD_SIZE;
-		    lookahead_count -= length;
-		    hist_count += length;
-		    if (hist_count > HIST_SIZE) {
-			hist_head = (hist_head + (hist_count-HIST_SIZE)) % HIST_SIZE;
-			hist_count = HIST_SIZE;
-		    }
-		    
-		    //int offset_start = mod(hist_count - offset, HIST_SIZE);
-
-		    
-		    //header_byte = (header_byte << 1);
-		    used_bytes += length;
-		    lookahead_head_mod+=length;
-		    if (lookahead_head_mod >= READ_UNITS) {
-			uint32_t k = lookahead_head_mod / READ_UNITS;
-			lookahead_head_mod = lookahead_head_mod % READ_UNITS;
-			lookahead_head_4 = (lookahead_head_4 + k) % LOOKAHEAD_UNITS;
-			lookahead_count_4-=k;
-			
-		    }
-		}
-		if ((++blocks) == 8) {
-		    out[out_start_idx + cur_header_byte_pos] = header_byte;
-		    header_byte = 0;
-		    blocks = 0;
-		    cur_header_byte_pos = out_bytes++;
-		}
-		//else
-		//   header_byte <<= 1;
-		c++;
-	    }
-	    if (blocks != 0) {
-		out[out_start_idx + cur_header_byte_pos] = header_byte;
-
-	    }
-	    lens[tid] = out_bytes;
-	    //if (out_bytes > my_chunk_size)
-	    //printf("comrpessed larger than uncompressed\tout_bytes: %llu\tmy_chunk_size: %llu\n", (unsigned long long) out_bytes, (unsigned long long) my_chunk_size);
-	    //printf("%llu done\n", (unsigned long long) tid);
-
-	}
-	
-    }
-    __device__ void compress_func_proto(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t in_chunk_size, const uint64_t out_chunk_size, const uint64_t n_chunks, uint64_t* lens, const uint64_t tid) {
-	uint64_t warp_id = WARP_ID(tid);
-	uint64_t lane_id = tid%32;
-	typedef cub::WarpReduce<uint64_t> WarpReduce;
-	__shared__ typename WarpReduce::TempStorage temp_storage[BLK_SIZE/32];
-	__shared__ uint8_t warp_mappings[32];
-	__shared__ uint32_t warp_lens[32];
-	__shared__ uint64_t s_aggregate;
-	if (warp_id < n_chunks) {
-	    unsigned active  = __activemask();
-	    uint8_t out_[OVERHEAD_PER_CHUNK(CHUNK_SIZE/32)];
-	    uint64_t rem = in_n_bytes % in_chunk_size;
-	    uint64_t our_chunk_size = ((warp_id == (n_chunks - 1)) && (rem)) ? rem : in_chunk_size;
-	    uint64_t my_chunk_size = our_chunk_size/32;
-	    uint64_t in_start_idx = warp_id * in_chunk_size;
-	    uint64_t out_start_idx = warp_id * out_chunk_size;
-
-	    uint8_t hist[HIST_SIZE] = {DEFAULT_CHAR};
-	    uint8_t lookahead[LOOKAHEAD_SIZE];
-	    uint32_t hist_head  = 0;
-	    uint32_t hist_count = 0;
-	    uint32_t lookahead_head = 0;
-	    uint32_t lookahead_count = 0;
-	    uint64_t consumed_bytes = 0;
-	    uint64_t out_bytes = 1;
-	    uint64_t cur_header_byte_pos = 0;
-	    uint8_t header_byte = 0;
-	    uint8_t blocks = 0;
-	    uint64_t c = 0;
-
-	    uint64_t used_bytes = 0;
-	    uint32_t lookahead_head_4 = 0;
-	    uint32_t lookahead_count_4 =0;
-	    const uint32_t* const in_4 = (const uint32_t*) (in + in_start_idx);
-	    uint32_t* lookahead_4 = ( uint32_t*) lookahead;
-	    uint32_t consumed_bytes_4 = 0;
-	    uint32_t lookahead_head_mod = 0;
-	    uint32_t iter = 0;
-	    while (used_bytes < my_chunk_size) {
-		unsigned active2 = __activemask();
-		uint64_t min = WarpReduce(temp_storage[warp_id]).Reduce(LOOKAHEAD_UNITS-lookahead_count_4, cub::Min());
-		uint64_t r = lookahead_count_4 + min;
-		min = __shfl_sync(active2, min, 0);
-		//fill up lookahead buffer
-		while ((lookahead_count_4 < r) && (consumed_bytes < my_chunk_size))  {
-		    lookahead_4[(lookahead_head_4 + (lookahead_count_4++)) % LOOKAHEAD_UNITS] =
-			in_4[(consumed_bytes_4++)*32 + lane_id];
-		    consumed_bytes += READ_UNITS;
-		    lookahead_count += READ_UNITS;
-		    
-		    if (consumed_bytes > my_chunk_size) {
-			uint32_t diff = consumed_bytes - my_chunk_size;
-			consumed_bytes -= diff;
-			lookahead_count -= diff;
-			//break;
-		    }
-		}
-		//printf("Consumed: %llu\tChunk Size: %llu\n", (unsigned long long) consumed_bytes, (unsigned long long) my_chunk_size);
-		uint32_t offset = 0;
-		uint32_t length = 0;
-		find_match(hist, hist_head, hist_count, lookahead, lookahead_head, lookahead_count, &offset, &length);
-		//if (tid == 0 && c < 5)
-		//	printf("HERE1: %c\t %llu\n", (char) lookahead[lookahead_head], (unsigned long long) c);
-		//no match
-		if (length == 0) {
-		    uint8_t v = lookahead[lookahead_head];
-		    out_[ (out_bytes++)] = v;
-		    lookahead_head = (lookahead_head + 1) % LOOKAHEAD_SIZE;
-		    lookahead_count--;
-		    hist[(hist_head+hist_count)%HIST_SIZE] = v;
-		    hist_count += 1;
-		    if (hist_count > HIST_SIZE) {
-			hist_head = (hist_head + (1)) % HIST_SIZE;
-			hist_count = HIST_SIZE;
-		    }
-		    header_byte = (header_byte | (1 << blocks));
-
-		    //if ((tid == 0) && (out_bytes < 100))
-		    //    printf("b: %llu\t1: %c\t ub: %llu\n", (unsigned long long) out_bytes, (char)v, (unsigned long long) used_bytes);
-		    used_bytes++;
-		    lookahead_head_mod++;
-		    if (lookahead_head_mod == READ_UNITS) {
-			lookahead_head_mod = 0;
-			lookahead_head_4 = (lookahead_head_4 + 1) % LOOKAHEAD_UNITS;
-			lookahead_count_4--;
-			
-		    }
-		    
-		}
-		//match
-		else {
-		    uint64_t v = (offset << LENGTH_SIZE) | (length - MIN_MATCH_LENGTH);
-		    uint64_t v2 = v;
-		    for (size_t i = 0; i < (MIN_MATCH_LENGTH-1); i++) {
-			uint8_t k = v & 0x00FF;
-			out_[(out_bytes++)] = k;
-			//printf("k: %llu\n", (unsigned long long) k);
-			v >>= 8;
-		    }
-		    uint32_t hist_start = hist_head+hist_count;
-		    for (size_t i = 0; i < length; i++) {
-			uint8_t z = lookahead[(lookahead_head+i) % LOOKAHEAD_SIZE];
-			hist[(hist_start+i) % HIST_SIZE]= z;
-			//if ((tid == 0) && (out_bytes < 100))
-			//	printf("b: %llu\t1: %c\t ub: %llu\tleng: %llu\toffset: %llu\tj: %llu\tv: %p\n", (unsigned long long) out_bytes, (char)z, (unsigned long long) used_bytes, (unsigned long long) length, (unsigned long long) offset, (unsigned long long) i,v2);
-		    }
-		    
-		    lookahead_head = (lookahead_head + length) % LOOKAHEAD_SIZE;
-		    lookahead_count -= length;
-		    hist_count += length;
-		    if (hist_count > HIST_SIZE) {
-			hist_head = (hist_head + (hist_count-HIST_SIZE)) % HIST_SIZE;
-			hist_count = HIST_SIZE;
-		    }
-		    
-		    //int offset_start = mod(hist_count - offset, HIST_SIZE);
-
-		    
-		    //header_byte = (header_byte << 1);
-		    used_bytes += length;
-		    lookahead_head_mod+=length;
-		    if (lookahead_head_mod >= READ_UNITS) {
-			uint32_t k = lookahead_head_mod / READ_UNITS;
-			lookahead_head_mod = lookahead_head_mod % READ_UNITS;
-			lookahead_head_4 = (lookahead_head_4 + k) % LOOKAHEAD_UNITS;
-			lookahead_count_4-=k;
-			
-		    }
-		}
-		if ((++blocks) == 8) {
-		    out_[cur_header_byte_pos] = header_byte;
-		    header_byte = 0;
-		    blocks = 0;
-		    cur_header_byte_pos = out_bytes++;
-		}
-		//else
-		//   header_byte <<= 1;
-		c++;
-	    }
-	    if (blocks != 0) {
-		out_[cur_header_byte_pos] = header_byte;
-
-	    }
-	    warp_lens[lane_id] = out_bytes;
-	    __syncthreads();
-	    uint64_t aggregate = 0;
-	    if (lane_id == 0) {
-		for (size_t i = 0; i < 32; i++) {
-		    uint32_t smaller_than_me = 0;
-		    uint32_t equal_to_me = 0;
-		    for (size_t j = 0; j< 32; j++) {
-			if (i != j) {
-			    if (warp_lens[i] > warp_lens[j])
-				smaller_than_me++;
-			    else if ((j < i) && (warp_lens[i] == warp_lens[j]))
-				equal_to_me++;
-			}
-		    }
-		    aggregate += ceil<uint32_t>(warp_lens[i], READ_UNITS)+1;
-		    warp_mappings[i] = smaller_than_me + equal_to_me;
-		    
-		}
-		s_aggregate = aggregate;
-
-	    }
-	    __syncthreads();
-	    uint32_t* out_4_ = (uint32_t*) (out + out_start_idx);
-	    uint32_t* out_4_in = (uint32_t*) out_;
-	    uint32_t my_map = warp_mappings[lane_id];
-	    uint32_t n_out_4 = ceil<uint32_t>(out_bytes, READ_UNITS)+1;
-	    out_4_[my_map] = n_out_4;
-	    uint32_t out_4 = 1;
-	    uint32_t out_4__ = 32* out_4;
-	    while (out_4 < n_out_4) {
-		unsigned active_ = __activemask();
-		unsigned c_a = __popc(active_);
-		out_4_[out_4__ + my_map] = out_4_in[out_4-1];
-		out_4__ += c_a;
-		out_4++;
-	    }
-	    if (lane_id == 0)
-		lens[warp_id] = s_aggregate;
-	    //if (out_bytes > my_chunk_size)
-	    //printf("comrpessed larger than uncompressed\tout_bytes: %llu\tmy_chunk_size: %llu\n", (unsigned long long) out_bytes, (unsigned long long) my_chunk_size);
-	    //printf("%llu done\n", (unsigned long long) tid);
-
-	}
-	
-    }
 
 	__global__ void
     __launch_bounds__(32, 32)
 	kernel_decompress(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const blk_off, const uint64_t* const col_len, const uint8_t* const col_map) {
 	uint64_t tid = threadIdx.x + blockDim.x * blockIdx.x;
-	decompress_func_new(in, out, in_n_bytes, out_n_bytes, out_chunk_size, n_chunks, blk_off, col_len, col_map);
+	decompress_func(in, out, in_n_bytes, out_n_bytes, out_chunk_size, n_chunks, blk_off, col_len, col_map);
     }
     __global__ void
     __launch_bounds__(32, 32)
@@ -1900,7 +1575,7 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
     __launch_bounds__(32, 32)
     kernel_compress(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t in_chunk_size, const uint64_t out_chunk_size, const uint64_t n_chunks, uint64_t* lens) {
 	uint64_t tid = threadIdx.x + blockDim.x * blockIdx.x;
-	compress_func_var_read(in, out, in_n_bytes, out_n_bytes, in_chunk_size, out_chunk_size, n_chunks, lens, tid);
+	//compress_func_var_read(in, out, in_n_bytes, out_n_bytes, in_chunk_size, out_chunk_size, n_chunks, lens, tid);
     }
 
     __host__ __device__ void shift_data_func(const uint8_t* const in, uint8_t* out, const uint64_t* const lens, const uint64_t in_chunk_size, const uint64_t n_chunks, uint64_t tid) {
@@ -1926,7 +1601,7 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	shift_data_func(in, out, lens, in_chunk_size, n_chunks, tid);
     }
 
-    __host__ void compress_gpu(const uint8_t* const in, uint8_t** out, const uint64_t in_n_bytes, uint64_t* out_n_bytes) {
+    __host__ void compress_gpu(const uint8_t* const in, const uint64_t in_n_bytes, uint8_t** out, uint64_t* out_n_bytes, uint8_t*** out_metadata, uint64_t** out_metadata_lens, uint64_t* out_metadata_num) {
 	uint8_t* d_in;
 	uint8_t* d_out;
 	uint8_t* temp;
@@ -1997,7 +1672,7 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	cuda_err_chk(cudaMemcpy(d_in, in, in_n_bytes, cudaMemcpyHostToDevice));
 
 
-	compress_init_func_new<<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
+	compress_init_func<<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes,
 											  chunk_size,exp_out_chunk_size, n_chunks,
 											  d_col_len,  d_blk_offset);
 
@@ -2043,20 +1718,26 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	cuda_err_chk(cudaMemcpy((*out), d_out, final_out_size, cudaMemcpyDeviceToHost));
 
 
+	*out_metadata_num = 4;
+	*out_metadata_lens = (uint64_t*) malloc((*out_metadata_num)*sizeof(uint64_t));
 
-	std::ofstream col_len_file ("./input_data/col_len.bin",std::ofstream::binary);
-	col_len_file.write ((const  char *)(col_len),  BLK_SIZE * num_chunk * 8);
-	col_len_file.close();
+	(*out_metadata_lens)[0] = sizeof(uint64_t);
+	(*out_metadata_lens)[1] = (num_chunk + 1) * sizeof(uint64_t);
+	(*out_metadata_lens)[2] = BLK_SIZE * num_chunk * sizeof(uint64_t);
+	(*out_metadata_lens)[3] = BLK_SIZE * num_chunk;
 
+	(*out_metadata) = (uint8_t**) malloc((*out_metadata_num) * sizeof(uint8_t*));
 
-	std::ofstream blk_off_file ("./input_data/blk_offset.bin",std::ofstream::binary);
-	blk_off_file.write ((const char *)(blk_offset), (num_chunk + 1)*8);
-	blk_off_file.close();
+	(*out_metadata)[0] = (uint8_t*) malloc(sizeof(uint64_t));
 
+	memcpy((*out_metadata)[0], &chunk_size, sizeof(uint64_t));
 
-	std::ofstream col_map_file ("./input_data/col_map.bin",std::ofstream::binary);
-	col_map_file.write ((const char *)(col_map),  BLK_SIZE * num_chunk);
-	col_map_file.close();
+	(*out_metadata)[1] = (uint8_t*) blk_offset;
+
+	(*out_metadata)[2] = (uint8_t*) col_len;
+
+	(*out_metadata)[3] = (uint8_t*) col_map;
+
 
 
 
@@ -2072,7 +1753,7 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
     }
 
 
- __host__ void decompress_gpu(const uint8_t* const in, uint8_t** out, const uint64_t in_n_bytes, uint64_t* out_n_bytes) {
+ __host__ int decompress_gpu(const uint8_t* const in, const uint64_t in_n_bytes, const uint8_t** const in_metadata, const uint64_t* const in_metadata_lens, const uint64_t in_metadata_num, uint8_t** out, uint64_t* out_n_bytes) {
 	uint8_t* d_in;
 	uint8_t* d_out;
 	uint64_t* d_lens;
@@ -2080,76 +1761,47 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	const uint64_t* const in_64 = (const uint64_t*) in;
 
 
-	int blk_off_fd;
-	struct stat blk_off_sb;
 	uint64_t* blk_off;
-	if((blk_off_fd = open("./input_data/blk_offset.bin", O_RDONLY)) == 0) {
-	    printf("Fatal Error: blk_offset File open error\n");
-	    //return -1;
-	}
-
-	fstat(blk_off_fd, &blk_off_sb);
-
-	blk_off = (uint64_t*) mmap(nullptr, blk_off_sb.st_size, PROT_READ, MAP_PRIVATE, blk_off_fd, 0);
-
-	if(blk_off == (void*)-1){
-	    printf("Fatal Error: blk_offset Mapping error\n");
-	    //return -1;
-	}
-
-	int col_len_fd;
-	struct stat col_len_sb;
 	uint64_t* col_len;
-	if((col_len_fd = open("./input_data/col_len.bin", O_RDONLY)) == 0) {
-	    printf("Fatal Error: col_len File open error\n");
-	    //return -1;
-	}
-
-	fstat(col_len_fd, &col_len_sb);
-
-	col_len = (uint64_t*)mmap(nullptr, col_len_sb.st_size, PROT_READ, MAP_PRIVATE, col_len_fd, 0);
-
-	if(col_len == (void*)-1){
-	    printf("Fatal Error: col_len Mapping error\n");
-	    //return -1;
-	}
-
-	int col_map_fd;
-	struct stat col_map_sb;
 	uint8_t* col_map;
-	if((col_map_fd = open("./input_data/col_map.bin", O_RDONLY)) == 0) {
-	    printf("Fatal Error: col_map File open error\n");
-	    //return -1;
+
+	uint64_t blk_off_count;
+	uint64_t col_len_count;
+	uint64_t col_map_count;
+	uint64_t chunk_size;
+
+	if (in_metadata_num >= 4) {
+		chunk_size = ((uint64_t*) in_metadata[0])[0];
+		blk_off = (uint64_t*) in_metadata[1];
+		col_len = (uint64_t*) in_metadata[2];
+		col_map = (uint8_t*) in_metadata[3];
+
+		blk_off_count = in_metadata_lens[1]/sizeof(uint64_t);
+		col_len_count = in_metadata_lens[2]/sizeof(uint64_t);
+		col_map_count = in_metadata_lens[3];
+
 	}
-
-	fstat(col_map_fd, &col_map_sb);
-
-	col_map = (uint8_t*)mmap(nullptr, col_map_sb.st_size, PROT_READ, MAP_PRIVATE, col_map_fd, 0);
-
-	if(col_map == (void*)-1){
-	    printf("Fatal Error: col_map Mapping error\n");
-	    //return -1;
-	}
-
-	uint64_t n_chunks = (blk_off_sb.st_size/sizeof(uint64_t)) - 1;
+	else
+		return -1;
+	uint64_t n_chunks = (blk_off_count) - 1;
 	uint64_t out_size = n_chunks * CHUNK_SIZE;
 
 
 	uint64_t* d_blk_off;
-	cuda_err_chk(cudaMalloc(&d_blk_off, blk_off_sb.st_size));
+	cuda_err_chk(cudaMalloc(&d_blk_off, blk_off_count*sizeof(uint64_t)));
 
 	uint64_t* d_col_len;
-	cuda_err_chk(cudaMalloc(&d_col_len, col_len_sb.st_size));
+	cuda_err_chk(cudaMalloc(&d_col_len, col_len_count*sizeof(uint64_t)));
 
 	uint8_t* d_col_map;
-	cuda_err_chk(cudaMalloc(&d_col_map, col_map_sb.st_size));
+	cuda_err_chk(cudaMalloc(&d_col_map, col_map_count));
 
 
-	cuda_err_chk(cudaMemcpy(d_blk_off, blk_off, blk_off_sb.st_size, cudaMemcpyHostToDevice));
+	cuda_err_chk(cudaMemcpy(d_blk_off, blk_off, blk_off_count*sizeof(uint64_t), cudaMemcpyHostToDevice));
 
-	cuda_err_chk(cudaMemcpy(d_col_len, col_len, col_len_sb.st_size, cudaMemcpyHostToDevice));
+	cuda_err_chk(cudaMemcpy(d_col_len, col_len, col_len_count*sizeof(uint64_t), cudaMemcpyHostToDevice));
 
-	cuda_err_chk(cudaMemcpy(d_col_map, col_map, col_map_sb.st_size, cudaMemcpyHostToDevice));
+	cuda_err_chk(cudaMemcpy(d_col_map, col_map, col_map_count, cudaMemcpyHostToDevice));
 
 
 
@@ -2184,7 +1836,7 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	dim3 grid_size( n_chunks);
 	dim3 blk(BLK_SIZE,1);
 	std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
-        kernel_decompress<<<grid_size, blk>>>(d_in, d_out, in_n_bytes, out_size, CHUNK_SIZE, n_chunks, d_blk_off, d_col_len, d_col_map);
+	kernel_decompress<<<grid_size, blk>>>(d_in, d_out, in_n_bytes, out_size, CHUNK_SIZE, n_chunks, d_blk_off, d_col_len, d_col_map);
 	cuda_err_chk(cudaDeviceSynchronize());
 	std::chrono::high_resolution_clock::time_point kernel_end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> total = std::chrono::duration_cast<std::chrono::duration<double>>(kernel_end - kernel_start);
@@ -2195,10 +1847,13 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	cuda_err_chk(cudaMemcpy((*out), d_out, out_bytes, cudaMemcpyDeviceToHost));
 	printf("bytes: %llu\n",*out_n_bytes );
 
-
+	cuda_err_chk(cudaFree(d_col_map));
+	cuda_err_chk(cudaFree(d_col_len));
+	cuda_err_chk(cudaFree(d_blk_off));
 	cuda_err_chk(cudaFree(d_out));
 	cuda_err_chk(cudaFree(d_in));
 
+	return 0;
     }
 
 
