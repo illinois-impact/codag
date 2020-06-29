@@ -130,8 +130,12 @@ namespace rlev2 {
 			}
 		};
 
+		const uint32_t t_read_mask = (0xffffffff << (32 - tid - 1));
+
 // if (tid == ERR_THREAD) printf("thread %d chunk size: %lu\n", ERR_THREAD, mychunk_size);
 		// bits_left is for 3 other encoding schemes
+		// TODO: this if statement does not have to be here. 
+		// use while(true) instead
         while (used_bytes < mychunk_size || curr_len > 0) {
 			// if (cid == 0 && tid == 0) {
 			// 	printf("used %u(%u) bytes\n", used_bytes, mychunk_size);
@@ -139,20 +143,28 @@ namespace rlev2 {
 			// printf("loop\n");
             auto mask = __activemask();
             bool read = read_count < mychunk_size;
-			auto res = __popc(__ballot_sync(mask, (read)));
+			uint32_t read_sync = __ballot_sync(mask, (read));
+			auto res = __popc(read_sync);
 
-			int left_active = 0;
-			for (int i=0; i<tid; ++i) {
-				if (read_count < col_len[cid * BLK_SIZE + i]) {
-					++left_active;
-				}
-			}
+			// if (tid == 24) printf("sync: %u\n", read_sync);
+			// if (tid == 24) printf("mask: %u\n", t_read_mask);
+
+			int left_act = __popc(read_sync & t_read_mask);
+
+
+			// int left_active = 0;
+			// for (int i=0; i<tid; ++i) {
+			// 	if (read_count < col_len[cid * BLK_SIZE + i]) {
+			// 		++left_active;
+			// 	}
+			// }
+			// printf("for tid %d, %d (%d) exp(act)\n", tid, left_active, left_act);
 // if (cid == 0 && tid == ERR_THREAD) {
 // printf("read active thread at %luth iter: %u(%d)\n",read_count / 4, res, left_active);
 // }
             if (read && input_buffer_count + 4 <= INPUT_BUFFER_SIZE) {
                 uint32_t* input_buffer_4B = (uint32_t *)(&(input_buffer[input_buffer_tail]));
-				input_buffer_4B[0] = in_4B[in_4B_off + left_active];  
+				input_buffer_4B[0] = in_4B[in_4B_off + left_act];  
 
 // if (cid == 0 && tid == ERR_THREAD) {
 // 	printf("chunk %d thread %d reads at pos(%u) %x%x%x%x\n", cid, tid, (in_4B_off + left_active) * 4,
@@ -202,16 +214,10 @@ namespace rlev2 {
 					bits_left = 0;
 					bits_left_over = 0;
 					curr_64 = 0;
-#ifdef DEBUG
-if (tid + cid == 0) printf("HEADER_DIRECT: %d len of ints\n", curr_len);
-#endif
 				}
 				
 				read_longs(curr_fbw);
 				if (curr_len <= 0) {
-#ifdef DEBUG
-if (curr_len < 0) printf("HEADER_DIRECT: this line should not occured\n");
-#endif
 					read_first = false; read_second = false;
 				}
 			}	break;
