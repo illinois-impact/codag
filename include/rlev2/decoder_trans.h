@@ -130,7 +130,7 @@ namespace rlev2 {
 			}
 		};
 
-		const uint32_t t_read_mask = (0xffffffff << (32 - tid - 1));
+		const uint32_t t_read_mask = (0xffffffff << (32 - tid));
 
 // if (tid == ERR_THREAD) printf("thread %d chunk size: %lu\n", ERR_THREAD, mychunk_size);
 		// bits_left is for 3 other encoding schemes
@@ -149,20 +149,30 @@ namespace rlev2 {
 			// if (tid == 24) printf("sync: %u\n", read_sync);
 			// if (tid == 24) printf("mask: %u\n", t_read_mask);
 
-			int left_act = __popc(read_sync & t_read_mask);
-
-
-			// int left_active = 0;
-			// for (int i=0; i<tid; ++i) {
-			// 	if (read_count < col_len[cid * BLK_SIZE + i]) {
-			// 		++left_active;
-			// 	}
-			// }
 			// printf("for tid %d, %d (%d) exp(act)\n", tid, left_active, left_act);
 // if (cid == 0 && tid == ERR_THREAD) {
 // printf("read active thread at %luth iter: %u(%d)\n",read_count / 4, res, left_active);
 // }
             if (read && input_buffer_count + 4 <= INPUT_BUFFER_SIZE) {
+				int left_act = __popc(read_sync & t_read_mask);
+
+
+				// int left_active = 0;
+				// for (int i=0; i<tid; ++i) {
+				// 	if (read_count < col_len[cid * BLK_SIZE + i]) {
+				// 		++left_active;
+				// 	}
+				// }
+				
+				// if (left_active != left_act) {
+				// 	printf("for tid %d at iteration %d is wrong %lu <-> %lu with ballot sync %u\n", tid, (int) (read_count / 4), read_count, col_len[cid * BLK_SIZE + tid], read_sync);
+				// 	printf("with ext(act) %d(%d)\n", left_act, left_active);
+				// } else {
+				// 	// if (tid == 24) printf("for tid %d at iteration %d is correct==\n", tid, (int) (read_count / 4));
+				// }
+
+
+
                 uint32_t* input_buffer_4B = (uint32_t *)(&(input_buffer[input_buffer_tail]));
 				input_buffer_4B[0] = in_4B[in_4B_off + left_act];  
 
