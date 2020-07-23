@@ -344,11 +344,8 @@ namespace rlev2 {
         uint64_t out_idx = blk_off[cid] + tid * DECODE_UNIT;
         int64_t out_bytes = acc_col_len[cid * BLK_SIZE + tid] - ((cid + tid == 0) ? 0 : acc_col_len[cid * BLK_SIZE + tid - 1]);
 
-        uint32_t* in_4B = (uint32_t *)(&(in[in_idx]));
-        uint32_t in_4B_idx = in_idx;
-        uint32_t* out_4B = (uint32_t *)(&(out[blk_off[cid]]));
-        uint32_t out_4B_idx = 0;
-        int iter = 0;
+        // uint32_t* out_4B = (uint32_t *)(&(out[blk_off[cid]]));
+        // uint32_t out_4B_idx = 0;
         while (true) {
             auto mask = __activemask();
             auto res = __popc(mask);
@@ -383,8 +380,7 @@ namespace rlev2 {
             // auto res = __popc(mask);
 
             
-            out_4B_idx += res;
-            in_4B_idx ++;
+            // out_4B_idx += res;
 
             out_idx += DECODE_UNIT * res;
             out_bytes -= DECODE_UNIT;
@@ -412,11 +408,8 @@ namespace rlev2 {
         col_len_t loc_col_len[32];
         memcpy(loc_col_len, col_len + cid * BLK_SIZE, 32 * sizeof(col_len_t));
 
-        int res, iter = 0;
-        uint64_t nxt_out_idx, cur_out_idx = 0;
         // More space should be saved. TODO: 
         uint64_t curr_iter_off = 0;
-        uint64_t curr_iter_out = 0;
         uint64_t out_idx = blk_off[cid];
         while (true) {
             int res = 0;
@@ -439,8 +432,6 @@ namespace rlev2 {
             }
             if (res == 0) break;
             curr_iter_off += DECODE_UNIT;
-            // nxt_out_idx = cur_out_idx + res * 4;
-            
         }
     }
 
