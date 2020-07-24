@@ -13,7 +13,7 @@ void test(int64_t ll[], uint8_t exp[], int64_t in_n_bytes, int64_t out_exp_bytes
     const auto base = sizeof(uint32_t) + chunks * sizeof(uint64_t) + sizeof(uint64_t);
 
     for (int i=0; i<128; ++i) {
-        // printf("out[%d]: %ld\n", i, out[base + i]);
+        printf("out[%d]: %x\n", i, out[base + i]);
         // assert(exp[i] == out[base + i]);
     }
     // return;
@@ -28,6 +28,10 @@ void test(int64_t ll[], uint8_t exp[], int64_t in_n_bytes, int64_t out_exp_bytes
     // for (int i=0; i<n_digits; ++i) {
     //     printf("decoded[%d]: %ld\n", i, decoded[i]);
     // }
+    for (int i=0; i<128; ++i) {
+        printf("decoded[%d]: %ld\n", i, decoded[i]);
+        // assert(exp[i] == out[base + i]);
+    }
 
     for (int i=0; i<n_digits; ++i) {
         if (decoded[i] != ll[i]) {
@@ -96,11 +100,32 @@ void test_SHORTREPEAT() {
     fprintf(stderr, "====== SHORT REPEAT PASSED =====\n");
 }
 
+void test_DIRECT1() {
+    printf("TEST +++++++++++++++++++++++++++++++++++++++++\n");
+    int64_t ll[256];
+
+    int offset = 0;
+    int curr = 0;
+    for (int i=0; i<256; ++i) {
+        ll[i] = curr + offset;
+        offset ++;
+        if (offset == ENCODE_UNIT) {
+            offset = 0;
+            curr += BLK_SIZE * ENCODE_UNIT;
+        }
+    }
+    uint8_t exp[1024];
+    test(ll, exp, sizeof(ll), sizeof(exp));
+    printf("FINISH TEST +++++++++++++++++++++++++++++++++++++++++\n");
+
+}
+
 int main() {
-    test_DELTA();
-    test_DELTA2();
-    test_SHORTREPEAT();
-    test_DIRECT();
-    test_PB();
+    // test_DELTA();
+    // test_DELTA2();
+    // test_SHORTREPEAT();
+    // test_DIRECT();
+    // test_PB();
+    test_DIRECT1();
     return 0;
 }

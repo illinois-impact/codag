@@ -4,7 +4,6 @@
 #include "decoder.h"
 #include "encoder.h"
 #include "decoder_trans.h"
-#include "decoder_trans_template.h"
 #include "encoder_trans.h"
 
 #endif
