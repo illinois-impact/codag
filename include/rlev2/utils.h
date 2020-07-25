@@ -1,7 +1,7 @@
 #ifndef _RLEV2_UTIL_H_
 #define _RLEV2_UTIL_H_
 
-constexpr int ENCODE_UNIT = 4; //each thread read 1 unit of input and proceed to next blk
+constexpr int ENCODE_UNIT = 1; //each thread read 1 unit of input and proceed to next blk
 constexpr int DECODE_UNIT = 4; 
 
 constexpr uint8_t HEADER_SHORT_REPEAT = 0b00000000;

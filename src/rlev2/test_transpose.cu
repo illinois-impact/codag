@@ -139,13 +139,13 @@ void test_encode_transpose() {
     //     }
     // }
 
-    int64_t n_digits = CHUNK_SIZE / sizeof(int64_t) ;
+    int64_t n_digits = CHUNK_SIZE * 2 / sizeof(int64_t) ;
 
     int64_t ll[n_digits];
     for (int i=0; i<n_digits; ++i) {
         ll[i] = i ;
 
-        if (i == 776 && i == 1551)  {
+        if (i % 776 == 0)  {
             ll[i] = 24104;
         }
     }
@@ -183,6 +183,7 @@ void test_encode_transpose() {
 }
 
 int main() {
+    // test_transpose_sync();
     test_encode_transpose();
     // test_SHORTREPEAT();
     // test_DIRECT();

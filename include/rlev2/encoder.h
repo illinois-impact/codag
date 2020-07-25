@@ -7,6 +7,7 @@
 #include "utils.h"
 
 namespace rlev2 {
+    template<bool skip=false>
     struct encode_info {
         int64_t deltas[MAX_LITERAL_SIZE];
         int64_t literals[MAX_LITERAL_SIZE];
@@ -23,7 +24,11 @@ namespace rlev2 {
 
         __host__ __device__
         inline void write_value(uint8_t val) {
-            output[potision ++] = val;
+            // if (skip) {
+            //     potision ++; 
+            // } else {
+                output[potision ++] = val;
+            // }
         }
     };
 
@@ -46,10 +51,10 @@ namespace rlev2 {
     }
 
     __host__ __device__ void block_encode(const uint64_t, int64_t*, const uint64_t, uint8_t*, uint64_t*);
-    __host__ __device__ void writeDirectValues(encode_info&);
-    __host__ __device__ void writeDeltaValues(encode_info&);
-    __host__ __device__ void writeShortRepeatValues(encode_info&);
-    __host__ __device__ void writePatchedBasedValues(encode_info&, patch_blob&);
+    __host__ __device__ void writeDirectValues(encode_info<>&);
+    __host__ __device__ void writeDeltaValues(encode_info<>&);
+    __host__ __device__ void writeShortRepeatValues(encode_info<>&);
+    __host__ __device__ void writePatchedBasedValues(encode_info<>&, patch_blob&);
 
     // Only need 8 bit (255) to represent 64 bit varint
     __host__ __device__
@@ -66,7 +71,7 @@ namespace rlev2 {
     }
 
     __host__ __device__ 
-    void write_aligned_ints(int64_t* in, uint32_t len, uint8_t bits, encode_info& info) {
+    void write_aligned_ints(int64_t* in, uint32_t len, uint8_t bits, encode_info<>& info) {
         if (bits < 8 ) {
             // For safetyness, only bits should be written. 
             auto bitMask = static_cast<uint8_t>((1 << bits) - 1);
@@ -105,7 +110,7 @@ namespace rlev2 {
     }
 
     __host__ __device__
-    void write_unaligned_ints(int64_t* in, uint32_t len, uint8_t bits, encode_info& info) {
+    void write_unaligned_ints(int64_t* in, uint32_t len, uint8_t bits, encode_info<>& info) {
         uint32_t bitsLeft = 8;
         uint8_t current = 0;
         for(uint32_t i=0; i <len; i++) {
@@ -165,7 +170,7 @@ namespace rlev2 {
     }
 
     __host__ __device__
-    void preparePatchedBlob1(encode_info& info, patch_blob& pb) {
+    void preparePatchedBlob1(encode_info<>& info, patch_blob& pb) {
         // mask will be max value beyond which patch will be generated
         int64_t mask = static_cast<int64_t>(static_cast<uint64_t>(1) << pb.bits95p) - 1;
         // printf("<<<<<<<<<<<<<=== pb95p %u\n", pb.bits95p);
@@ -250,7 +255,7 @@ namespace rlev2 {
     }
 
     __host__ __device__
-    void determineEncoding(encode_info& info) {
+    void determineEncoding(encode_info<>& info) {
         // printf("determine encoding\n");
         int64_t* literals = info.literals;
         if (info.num_literals <= MINIMUM_REPEAT) {
@@ -353,12 +358,12 @@ namespace rlev2 {
     }
 
     __host__ __device__
-    inline void write_header_short_repeat(const uint8_t width, const uint8_t count, encode_info& info) {
+    inline void write_header_short_repeat(const uint8_t width, const uint8_t count, encode_info<>& info) {
         info.write_value(((width - 1) << 3 ) | (count - MINIMUM_REPEAT));
     }
 
     __host__ __device__
-    void writeShortRepeatValues(encode_info& info) {
+    void writeShortRepeatValues(encode_info<>& info) {
         // printf("write short repeat\n");
         int64_t	val = info.literals[0];
 
@@ -379,7 +384,7 @@ namespace rlev2 {
     }
 
     __host__ __device__
-    inline void write_header_direct(const uint16_t encoded_width, const uint16_t len, encode_info& info) {
+    inline void write_header_direct(const uint16_t encoded_width, const uint16_t len, encode_info<>& info) {
         const uint8_t first = static_cast<uint8_t>(0b01000000 | (encoded_width << 1) | ((len & 0x100) >> 8));
         const uint8_t second = static_cast<uint8_t>(len & 0xff);
         info.write_value(first);
@@ -387,7 +392,7 @@ namespace rlev2 {
     }
 
     __host__ __device__
-    void writeDirectValues(encode_info& info) {
+    void writeDirectValues(encode_info<>& info) {
         // printf("write direct\n");
 
         // write the number of fixed bits required in next 5 bits
@@ -408,7 +413,7 @@ namespace rlev2 {
     }
 
     __host__ __device__ 
-    void writeVulong(int64_t val, encode_info& info) {
+    void writeVulong(int64_t val, encode_info<>& info) {
         while (true) {
         if ((val & ~0x7f) == 0) {
             info.write_value(static_cast<char>(val));
@@ -421,12 +426,12 @@ namespace rlev2 {
     }
 
     __host__ __device__
-    void writeVslong(int64_t val, encode_info& info) {
+    void writeVslong(int64_t val, encode_info<>& info) {
         writeVulong((val << 1) ^ (val >> 63), info);
     }
 
     __host__ __device__ 
-    inline void write_header_delta(const uint8_t encoded_width, const uint16_t len, encode_info& info) {
+    inline void write_header_delta(const uint8_t encoded_width, const uint16_t len, encode_info<>& info) {
         const uint8_t first = 0b11000000 | (encoded_width << 1) | ((len & 0x100) >> 8);
         const uint8_t second = len & 0xff;
         info.write_value(first);
@@ -434,7 +439,7 @@ namespace rlev2 {
     }
 
     __host__ __device__ 
-    void writeDeltaValues(encode_info& info) {
+    void writeDeltaValues(encode_info<>& info) {
         // printf("write delta\n");
 
         uint16_t len = 0;
@@ -473,7 +478,7 @@ namespace rlev2 {
     }
     
     __host__ __device__ 
-    void writePatchedBasedValues(encode_info& info, patch_blob& pb) {
+    void writePatchedBasedValues(encode_info<>& info, patch_blob& pb) {
         // printf("write patched base\n");
 
         uint32_t& varlen = info.var_runlen;
@@ -541,7 +546,7 @@ namespace rlev2 {
     }
 
     __host__ __device__ void block_encode(const uint64_t tid, int64_t* in, const uint64_t in_n_bytes, uint8_t* out, uint64_t* offset) {
-        encode_info info;
+        encode_info<> info;
         info.output = out + tid * OUTPUT_CHUNK_SIZE;
 
         int64_t prev_delta;
