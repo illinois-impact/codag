@@ -1,9 +1,13 @@
 #ifndef _RLEV2_UTIL_H_
 #define _RLEV2_UTIL_H_
 
+#define ERR_THREAD 12
+
 constexpr int ENCODE_UNIT = 1; //each thread read 1 unit of input and proceed to next blk
 constexpr int DECODE_UNIT = 4; 
+constexpr uint64_t VARINT_MASK = 0x7f;
 
+constexpr uint8_t HEADER_MASK         = 0xc0;
 constexpr uint8_t HEADER_SHORT_REPEAT = 0b00000000;
 constexpr uint8_t HEADER_DIRECT       = 0b01000000;
 constexpr uint8_t HEADER_PACTED_BASE  = 0b10000000;
@@ -48,7 +52,8 @@ constexpr   uint32_t INPUT_BUFFER_SIZE()        { return (32); }
 constexpr   uint16_t MAX_LITERAL_SIZE_()        { return 128; }
 constexpr   uint8_t  MINIMUM_REPEAT_()          { return 3; }
 constexpr   uint8_t  MAXIMUM_REPEAT_()          { return 127 + MINIMUM_REPEAT_(); }
-constexpr   uint64_t OUTPUT_CHUNK_SIZE_()       { return CHUNK_SIZE_() + (CHUNK_SIZE_() - 1) / MAX_LITERAL_SIZE_() + 1; }
+// constexpr   uint64_t OUTPUT_CHUNK_SIZE_()       { return CHUNK_SIZE_() + (CHUNK_SIZE_() - 1) / MAX_LITERAL_SIZE_() + 1; }
+constexpr   uint64_t OUTPUT_CHUNK_SIZE_()       { return CHUNK_SIZE_() * 2; }
 constexpr   uint32_t MAX_SHORT_REPEAT_LENGTH_() { return 10; }
 constexpr   uint8_t  HIST_LEN_()                { return 32; }
 

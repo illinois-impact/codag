@@ -6,6 +6,8 @@
 
 #define DEBUG
 
+#define DECODE_BUFFER_COUNT 256
+
 namespace rlev2 {
     template<int read_unit>
 	__global__ void decompress_func(const uint8_t* in, const uint64_t n_chunks, const blk_off_t* blk_off, const col_len_t* col_len, int64_t* out) {
@@ -24,12 +26,14 @@ namespace rlev2 {
 		int64_t* out_8B = out + (out_start_idx + tid * read_unit); 
 		// printf("out off %lu for thread %d\n", out_start_idx + tid * 1, tid);
 
-		uint8_t input_buffer[128];
+		uint8_t input_buffer[DECODE_BUFFER_COUNT];
 		uint8_t input_buffer_head = 0;
 		uint8_t input_buffer_tail = 0;
-		uint8_t input_buffer_count = 0;
+		int input_buffer_count = 0;
 
 		uint64_t read_count = 0;
+
+		uint8_t curr_fbw = 0, curr_fbw_left = 0;
 
 		bool read_first = false, read_second;
 		uint8_t first_byte;
@@ -46,21 +50,24 @@ namespace rlev2 {
 		int64_t base_val, base_delta, *base_out; // for delta encoding
         int base_write_offset;
 
-		uint8_t bw, pw, pgw, pll, patch_gap; // for patched base encoding
+		int bw, pw, pgw, pll, patch_gap, curr_pwb_left; // for patched base encoding
 
         int curr_write_offset = 0;
 
 		auto read_byte = [&]() {
+// #ifdef DEBUG
+// if (cid == 0 && tid == ERR_THREAD) printf("thread %d read byte %x\n", tid, input_buffer[input_buffer_head]);
+// #endif
 			auto ret = input_buffer[input_buffer_head];
 			input_buffer_count -= 1;
 			used_bytes += 1;
-			input_buffer_head = (input_buffer_head + 1) % INPUT_BUFFER_SIZE;
+			input_buffer_head = (input_buffer_head + 1) % DECODE_BUFFER_COUNT;
 			return ret;
 		};
 
 		auto write_int = [&](int64_t i) {
 // #ifdef DEBUG
-// if (cid == 0 && tid == 0) printf("thread %d write int %ld\n", tid, i);
+// if (cid == 0 && tid == ERR_THREAD) printf("thread %d write int %ld at idx %d\n", tid, i, (out_8B - out));
 // #endif
 			*(out_8B + curr_write_offset)= i; 
             curr_write_offset ++;
@@ -68,6 +75,10 @@ namespace rlev2 {
                 curr_write_offset = 0;
                 out_8B += BLK_SIZE * read_unit;
             } 
+
+			curr_len --;
+			curr_64 = 0;
+			curr_fbw_left = curr_fbw;
 		};
 
 		auto read_uvarint = [&]() {
@@ -76,7 +87,7 @@ namespace rlev2 {
 			uint8_t b = 0;
 			do {
 				b = read_byte();
-				out |= (0x7f & b) << offset;
+				out |= (VARINT_MASK & b) << offset;
 				offset += 7;
 			} while (b >= 0x80);
 			return out;
@@ -95,58 +106,69 @@ namespace rlev2 {
 			return ret;
 		};
 
-		auto read_longs = [&](uint8_t fbw) {
-			// int max_iter = 10, iter = 0;
-			while (curr_len > 0 && (input_buffer_count || bits_left)) {
-				int bits_left_to_read = fbw;
-				while (input_buffer_count && bits_left_to_read > bits_left) {
+		auto read_longs = [&]() {
+// #ifdef DEBUG
+// if (tid == 8) printf("current buffer left: %d with currlen(%d)\n", input_buffer_count + bits_left, curr_len);
+// #endif
+			while (curr_len > 0) {
+				// iter ++;
+				while (curr_fbw_left > bits_left) {
+					if (input_buffer_count <= 0) return;
 					curr_64 <<= bits_left;
 					curr_64 |= bits_left_over & ((1 << bits_left) - 1);
-					bits_left_to_read -= bits_left;
+					curr_fbw_left -= bits_left;
 					bits_left_over = read_byte();
 					bits_left = 8;
-					
 				}
 
-				if (bits_left_to_read <= bits_left) {
+				if (curr_fbw_left <= bits_left) {
 				// if not curr_64 is imcomplete
-					if (bits_left_to_read > 0) {
-						curr_64 <<= bits_left_to_read;
-						bits_left -= bits_left_to_read;
-						curr_64 |= (bits_left_over >> bits_left) & ((1 << bits_left_to_read) - 1);
+					if (curr_fbw_left > 0) {
+						curr_64 <<= curr_fbw_left;
+						bits_left -= curr_fbw_left;
+						curr_64 |= (bits_left_over >> bits_left) & ((1 << curr_fbw_left) - 1);
 					}
 
 					write_int(curr_64);
-					curr_len --;
-					curr_64 = 0;
-				} else {
-					if (input_buffer_count == 0) break;
-				}
+				} 
+
 			}
 		};
 
-		const uint32_t t_read_mask = (0xffffffff << (32 - tid));
+#ifdef DEBUG
+int iteration = 0, max_iter = 350;
+#endif
+
+		const uint32_t t_read_mask = (0xffffffff >> (32 - tid));
         while (used_bytes < mychunk_size || curr_len > 0) {
+#ifdef DEBUG
+iteration ++;
+#endif
             auto mask = __activemask();
-            bool read = read_count < mychunk_size;
+            bool read = (read_count < mychunk_size) && (input_buffer_count + 4 <= DECODE_BUFFER_COUNT);
 			uint32_t read_sync = __ballot_sync(mask, (read));
 			auto res = __popc(read_sync);
-
-            if (read && input_buffer_count + 4 <= INPUT_BUFFER_SIZE) {
+// #ifdef DEBUG
+// if (res != 32) printf("tid %d read(%d) is not with %lu < %lu with buffer count %d\n", tid, res, read_count, mychunk_size, (input_buffer_count + 4));
+// #endif
+            if (read) {
 				int left_act = __popc(read_sync & t_read_mask);
-
+#ifdef DEBUG
+	// printf("tid %d with active mask: %u\n", tid, mask);
+	// printf("tid %d with left active: %d\n", tid, left_act);
+#endif
                 uint32_t* input_buffer_4B = (uint32_t *)(&(input_buffer[input_buffer_tail]));
 				input_buffer_4B[0] = in_4B[in_4B_off + left_act];  
 // #ifdef DEBUG
-// if (cid ==0 && tid == 0) {
-// 	printf("thread %d read bytes %x%x%x%x\n", tid, input_buffer[input_buffer_head], 
-// 	input_buffer[input_buffer_head + 1], 
-// 	input_buffer[input_buffer_head + 2], 
-// 	input_buffer[input_buffer_head + 3]);
+// if (cid ==0 && tid == ERR_THREAD) {
+// 	printf("thread %d read bytes at %u %x%x%x%x\n", tid, (in_4B_off + left_act) * 4, input_buffer[input_buffer_tail], 
+// 	input_buffer[input_buffer_tail + 1], 
+// 	input_buffer[input_buffer_tail + 2], 
+// 	input_buffer[input_buffer_tail + 3]);
 // }
 // #endif
 
-				input_buffer_tail = (input_buffer_tail + 4) % INPUT_BUFFER_SIZE;
+				input_buffer_tail = (input_buffer_tail + 4) % DECODE_BUFFER_COUNT;
 				input_buffer_count += 4;
 				read_count += 4;
 		
@@ -155,27 +177,30 @@ namespace rlev2 {
 
 			if (!read_first) {
 				first_byte = read_byte();
+        		curr_fbw = get_decoded_bit_width((first_byte >> 1) & 0x1f);
+				curr_fbw_left = curr_fbw;
 				read_first = true;
 				read_second = false;
 			}
 
-			switch(first_byte & 0xC0) {
+			switch(first_byte & HEADER_MASK) {
 			case HEADER_SHORT_REPEAT: {
 				auto num_bytes = ((first_byte >> 3) & 0x07) + 1;
 				if (num_bytes <= input_buffer_count) { 
-					curr_64 = 0;
+					int64_t tmp_int = 0;
 					while (num_bytes-- > 0) {
-						curr_64 |= (read_byte() << (num_bytes * 8));
+						tmp_int |= ((int64_t)read_byte() << (num_bytes * 8));
 					}
 					auto cnt = (first_byte & 0x07) + MINIMUM_REPEAT;
 					while (cnt-- > 0) {
-						write_int(curr_64);
+						write_int(tmp_int);
 					}
+				} else {
+					break;
 				}
 				read_first = false;
 			}	break;
 			case HEADER_DIRECT: {
-        		uint8_t curr_fbw = get_decoded_bit_width((first_byte >> 1) & 0x1f);
 				if (!read_second) {
 					read_second = true;
 					curr_len = (((first_byte & 0x01) << 8) | read_byte()) + 1;
@@ -184,13 +209,12 @@ namespace rlev2 {
 					curr_64 = 0;
 				}
 				
-				read_longs(curr_fbw);
+				read_longs();
 				if (curr_len <= 0) {
 					read_first = false;
 				}
 			}	break;
 			case HEADER_DELTA: {
-        		uint8_t curr_fbw = get_decoded_bit_width((first_byte >> 1) & 0x1f);
 				if (!read_second) {
 					read_second = true;
 					curr_len = (((first_byte & 0x01) << 8) | read_byte()) + 1;
@@ -200,10 +224,11 @@ namespace rlev2 {
 					dal_read_base = false;
 				}
 
-				if (!dal_read_base && (input_buffer_count >= 8 + curr_fbw || !read)) {//TODO: should be min(fbw, 8)
+				if (!dal_read_base && (input_buffer_count >= 64 + curr_fbw || !read)) {
+					//TODO: fbw only ensures delta bits. No simple way to make sure base val bits.
+					//TODO: try find a safer way.
 					base_val = read_uvarint();
 					base_delta = read_svarint();
-					
 					write_int(base_val);
 					base_val += base_delta;
 					write_int(base_val);
@@ -211,15 +236,13 @@ namespace rlev2 {
 					base_out = out_8B;
                     base_write_offset = curr_write_offset;
 
-					curr_len -= 2;
 					dal_read_base = true;
 				}
 
 				if (dal_read_base) {
 					if (((first_byte >> 1) & 0x1f) != 0) {
 						// var delta
-						read_longs(curr_fbw);
-						
+						read_longs();
 					} else {
 						// fixed delta encoding
 						while (curr_len > 0) {
@@ -259,10 +282,10 @@ namespace rlev2 {
 				}
 			}	break;
 			case HEADER_PACTED_BASE: {
-// if (tid == 0) printf("======> case patched baes\n");
-
+// if (tid == ERR_THREAD) {
+// 	printf("patched base case\n");
+// }
 				//TODO Try to guarantee there are at least 4 btyes to read (all headers)
-				uint8_t curr_fbw = get_decoded_bit_width((first_byte >> 1) & 0x1f);
 				if (!read_second) {
 					if (input_buffer_count < 3) break;
 				// Here for patched base, read_second includes third and forth header byte
@@ -281,6 +304,8 @@ namespace rlev2 {
 					patch_gap = 0;
 					dal_read_base = false;
 
+					curr_pwb_left = get_closest_bit(pw + pgw);
+
 					read_second = true;
 				}
 				
@@ -297,38 +322,35 @@ namespace rlev2 {
 				if (!dal_read_base) break;
 
 				if (curr_len > 0) {
-					read_longs(curr_fbw);
+					read_longs();
 				} else {
-					auto cfb = get_closest_bit(pw + pgw);
 					auto patch_mask = (static_cast<uint16_t>(1) << pw) - 1;
-					while (pll > 0 && (input_buffer_count || bits_left)) {
-						auto bits_left_to_read = cfb;
-						while (input_buffer_count && bits_left_to_read > bits_left) {
+					while (pll > 0) {
+						while (input_buffer_count > 0 && curr_pwb_left > bits_left) {
 							curr_64 <<= bits_left;
 							curr_64 |= bits_left_over & ((1 << bits_left) - 1);
-							bits_left_to_read -= bits_left;
+							curr_pwb_left -= bits_left;
 							bits_left_over = read_byte();
 							bits_left = 8;
 						}
 
-						if (bits_left_to_read <= bits_left) {
-						// if not curr_64 is imcomplete
-							if (bits_left_to_read > 0) {
-								curr_64 <<= bits_left_to_read;
-								bits_left -= bits_left_to_read;
-								curr_64 |= (bits_left_over >> bits_left) & ((1 << bits_left_to_read) - 1);
+						if (curr_pwb_left <= bits_left) {
+							if (curr_pwb_left > 0) {
+								curr_64 <<= curr_pwb_left;
+								bits_left -= curr_pwb_left;
+								curr_64 |= (bits_left_over >> bits_left) & ((1 << curr_pwb_left) - 1);
 							}
 
-							// write_int(curr_64);
 							patch_gap += curr_64 >> pw;
 							base_out[(patch_gap / read_unit) * BLK_SIZE + (patch_gap % read_unit)] |= static_cast<int64_t>(curr_64 & patch_mask) << curr_fbw;
 
 
 							pll --;
 							curr_64 = 0;
-						} else {
-							if (input_buffer_count == 0) break;
-						}
+							curr_pwb_left = get_closest_bit(pw + pgw);
+						} 
+						if (input_buffer_count <= 0) break;
+
 					}
 					if (pll <= 0) {
 						while (base_out < out_8B) {
@@ -345,9 +367,18 @@ namespace rlev2 {
 					}
 				}
 			}	break;
+			default:
+			printf("something went wrong=================\n");
+			break;
 			}
 
 			__syncwarp(mask);
+// #ifdef DEBUG
+// if (iteration > max_iter) {
+// printf("break max iter with tid %d %lu(%lu) currlen %d \n", tid, used_bytes, mychunk_size, curr_len);
+// break;
+// }
+// #endif
         }
 		
 

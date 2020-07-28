@@ -92,7 +92,7 @@ namespace rlev2 {
         const uint8_t encoded_fbw = (first >> 1) & 0x1f;
         const uint8_t fbw = get_decoded_bit_width(encoded_fbw);
         const uint16_t len = ((static_cast<uint16_t>(first & 0x01) << 8) | read_byte(in)) + 1;
-        
+
         auto base_val = static_cast<int64_t>(readVulong(in));
         auto base_delta = static_cast<int64_t>(readVslong(in));
 

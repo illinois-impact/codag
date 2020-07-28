@@ -212,8 +212,9 @@ namespace rlev2 {
                 in_start += BLK_SIZE * read_unit;
                 curr_read_offset = 0;
             }
-
-            // if (tid == 0) printf("thread %u read %ld\n", tid, val);
+// #ifdef DEBUG
+// if (tid == ERR_THREAD) printf("thread %u read %ld\n", tid, val);
+// #endif
             if (num_literals == 0) {
                 literals[num_literals ++] = val;
                 fix_runlen = 1;
@@ -311,9 +312,13 @@ namespace rlev2 {
             }
         }
 // #ifdef DEBUG
-// if (cid == 0 && tid == 0) {
-//     for (int i=0; i<info.potision; ++i) {
-//         printf("thread 0 write byte %x\n", info.output[i]);
+// if (tid == ERR_THREAD) {
+//     for (int i=0; i<info.potision; i+=4) {
+//         printf("thread %d write bytes %x%x%x%x\n", tid, 
+//         info.output[i], 
+//         info.output[i + 1], 
+//         info.output[i + 2], 
+//         info.output[i + 3]);
 //     }
 // }
 // #endif
@@ -527,8 +532,12 @@ namespace rlev2 {
 
 // #ifdef DEBUG
 // if (tid == 0) {
-//     for (int i=0; i<info.potision; ++i) {
-//         printf("thread %d write %x\n" ,tid, info.output[i]);
+//     for (int i=0; i<info.potision; i+=4) {
+//         printf("thread %d write bytes %x%x%x%x\n", tid, 
+//         info.output[i], 
+//         info.output[i + 1], 
+//         info.output[i + 2], 
+//         info.output[i + 3]);
 //     }
 // }
 // #endif
@@ -559,6 +568,17 @@ namespace rlev2 {
             for (int i=0; i<DECODE_UNIT; ++i) {
                 out[out_offset + left_active * DECODE_UNIT + i] = in[out_byte ++];
             }
+
+// #ifdef DEBUG
+// if (cid == 0 && tid == ERR_THREAD) {
+//     printf("thread %d out4b at %ld with %x%x%x%x\n", tid, 
+//     out_offset + left_active * DECODE_UNIT,
+//     out[out_offset + left_active * DECODE_UNIT ],
+//     out[out_offset + left_active * DECODE_UNIT + 1],
+//     out[out_offset + left_active * DECODE_UNIT + 2],
+//     out[out_offset + left_active * DECODE_UNIT + 3]);
+// }
+// #endif
             
             out_offset += DECODE_UNIT * active;
             __syncwarp(mask);
@@ -593,48 +613,24 @@ namespace rlev2 {
         
         initialize_bit_maps();
 
-        // block_encode_new_templated<ENCODE_UNIT><<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
-        //         d_out, d_col_len,  d_blk_off);
+        block_encode_new_templated<ENCODE_UNIT><<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
+                d_out, d_col_len,  d_blk_off);
 
-	    // cuda_err_chk(cudaDeviceSynchronize()); 
-
-        // thrust::inclusive_scan(thrust::device, d_blk_off, d_blk_off + n_chunks + 1, d_blk_off);
-	    // cuda_err_chk(cudaDeviceSynchronize()); 
-        
-        // thrust::inclusive_scan(thrust::device, d_col_len, d_col_len + n_chunks * BLK_SIZE, d_acc_col_len);
-	    // cuda_err_chk(cudaDeviceSynchronize()); 
-
-        // // block_encode_new_write<<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
-        // //                     d_out, d_acc_col_len,  d_blk_off);
-        // block_encode_new_write_template<ENCODE_UNIT><<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
-        //                     d_out, d_acc_col_len,  d_blk_off);
-	    // cuda_err_chk(cudaDeviceSynchronize()); 
-
-        
-        // col_len = new col_len_t[n_chunks * BLK_SIZE];
-	    // cuda_err_chk(cudaMemcpy(col_len, d_col_len, sizeof(col_len_t) * BLK_SIZE * n_chunks, cudaMemcpyDeviceToHost));
-
-        // blk_off = new blk_off_t[n_chunks + 1];
-	    // cuda_err_chk(cudaMemcpy(blk_off, d_blk_off, sizeof(blk_off_t) * (n_chunks + 1), cudaMemcpyDeviceToHost));
-
-        // out_n_bytes = blk_off[n_chunks];
-        // out = new uint8_t[out_n_bytes];
-        // blk_off[n_chunks] = in_n_bytes; //use last index of blk_off to store file size.
-        
-        // cuda_err_chk(cudaMalloc(&d_out_transpose, out_n_bytes));
-        // tranpose_col_len_single<<<n_chunks, 1>>>(d_out, d_acc_col_len, d_col_len, d_blk_off, d_out_transpose);
-	    // cuda_err_chk(cudaDeviceSynchronize()); 
-
-
-	    // cuda_err_chk(cudaMemcpy(out, d_out_transpose, out_n_bytes, cudaMemcpyDeviceToHost));
-        
-        /*
-        block_encode_transpose<ENCODE_UNIT><<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, d_out, d_col_len,  d_blk_off);
-        thrust::inclusive_scan(thrust::device, d_blk_off, d_blk_off + n_chunks + 1, d_blk_off);
-        cuda_err_chk(cudaMalloc(&d_out_transpose, out_n_bytes));
-        post_data_tranpose<<<n_chunks, BLK_SIZE>>>(d_out, d_col_len, d_blk_off, d_out_transpose);
 	    cuda_err_chk(cudaDeviceSynchronize()); 
 
+        thrust::inclusive_scan(thrust::device, d_blk_off, d_blk_off + n_chunks + 1, d_blk_off);
+	    cuda_err_chk(cudaDeviceSynchronize()); 
+        
+        thrust::inclusive_scan(thrust::device, d_col_len, d_col_len + n_chunks * BLK_SIZE, d_acc_col_len);
+	    cuda_err_chk(cudaDeviceSynchronize()); 
+
+        // block_encode_new_write<<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
+        //                     d_out, d_acc_col_len,  d_blk_off);
+        block_encode_new_write_template<ENCODE_UNIT><<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
+                            d_out, d_acc_col_len,  d_blk_off);
+	    cuda_err_chk(cudaDeviceSynchronize()); 
+
+        
         col_len = new col_len_t[n_chunks * BLK_SIZE];
 	    cuda_err_chk(cudaMemcpy(col_len, d_col_len, sizeof(col_len_t) * BLK_SIZE * n_chunks, cudaMemcpyDeviceToHost));
 
@@ -644,9 +640,17 @@ namespace rlev2 {
         out_n_bytes = blk_off[n_chunks];
         out = new uint8_t[out_n_bytes];
         blk_off[n_chunks] = in_n_bytes; //use last index of blk_off to store file size.
+        
+        cuda_err_chk(cudaMalloc(&d_out_transpose, out_n_bytes));
+        tranpose_col_len_single<<<n_chunks, 1>>>(d_out, d_acc_col_len, d_col_len, d_blk_off, d_out_transpose);
+        // post_data_tranpose<<<n_chunks, BLK_SIZE>>>(d_out, d_col_len, d_blk_off, d_out_transpose);
+        cuda_err_chk(cudaDeviceSynchronize()); 
+
 
 	    cuda_err_chk(cudaMemcpy(out, d_out_transpose, out_n_bytes, cudaMemcpyDeviceToHost));
-        */
+        
+
+        /*
         block_encode_transpose<ENCODE_UNIT><<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, d_out, d_col_len,  d_blk_off);
         thrust::inclusive_scan(thrust::device, d_blk_off, d_blk_off + n_chunks + 1, d_blk_off);
         cuda_err_chk(cudaDeviceSynchronize()); 
@@ -667,6 +671,7 @@ namespace rlev2 {
 	    cuda_err_chk(cudaDeviceSynchronize()); 
 
 	    cuda_err_chk(cudaMemcpy(out, d_out_transpose, out_n_bytes, cudaMemcpyDeviceToHost));
+        */
 
 	    cuda_err_chk(cudaFree(d_in));
 	    cuda_err_chk(cudaFree(d_out));
