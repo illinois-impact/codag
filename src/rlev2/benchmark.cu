@@ -50,7 +50,10 @@ int main(int argc, char** argv) {
     auto decode_start = std::chrono::high_resolution_clock::now();
     rlev2::decompress_gpu(encoded, encoded_bytes, n_chunks, blk_off, col_len, decoded, decoded_bytes);
     auto decode_end = std::chrono::high_resolution_clock::now();
-
+       
+    auto decomp = std::chrono::duration_cast<std::chrono::duration<double>>(decode_end - decode_start);
+    std::cout << "Decompression size: " << encoded_bytes << " bytes\n";
+    std::cout << "Decompression time: " << decomp.count() << " secs\n";
     // printf("exp(actual) %lu(%lu)\n",decoded_bytes, sizeof(ll));
     // for (int i=0; i<n_digits; ++i) {
     //     if (ll[i] != decoded[i]) {
