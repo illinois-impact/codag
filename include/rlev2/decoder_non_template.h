@@ -1,6 +1,6 @@
 #include "utils.h"
-    constexpr int DECODE_BUFFER_COUNT = 256;
-constexpr int SHM_BUFFER_COUNT = DECODE_BUFFER_COUNT * BLK_SIZE;
+//constexpr int DECODE_BUFFER_COUNT = 256;
+//constexpr int SHM_BUFFER_COUNT = DECODE_BUFFER_COUNT * BLK_SIZE;
 
     __global__ void decompress_func_non_template(const uint8_t* __restrict__ in, const uint64_t n_chunks, const blk_off_t* __restrict__ blk_off, const col_len_t* __restrict__ col_len, int64_t* __restrict__ out) {
 		auto tid = threadIdx.x;

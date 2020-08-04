@@ -66,9 +66,9 @@ int main(int argc, char** argv) {
     
     assert(decoded_bytes == in_sb.st_size);
     for (int i=0; i<decoded_bytes/sizeof(int64_t); ++i) {
-        // if (decoded[i] != in[i]) {
-        //     printf("fail at %d %ld(%ld)\n", i, in[i], decoded[i]);
-        // }
+         if (decoded[i] != in[i]) {
+             printf("fail at %d %ld(%ld)\n", i, in[i], decoded[i]);
+         }
         assert(decoded[i] == in[i]);
     }
 
