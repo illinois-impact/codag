@@ -4,7 +4,7 @@
 #define ERR_THREAD 15
 #define ERR_CHUNK 3
 
-constexpr int ENCODE_UNIT = 8; //each thread read 1 unit of input and proceed to next blk
+constexpr int ENCODE_UNIT = 4; //each thread read 1 unit of input and proceed to next blk
 constexpr int DECODE_UNIT = 4; 
 constexpr uint64_t VARINT_MASK = 0x7f;
 
