@@ -10,6 +10,7 @@
 #include <chrono>
 
 #include <rlev2/rlev2.h>
+#include <cuda/atomic>
 
 int main(int argc, char** argv) {
     if (argc < 2) {

@@ -225,7 +225,7 @@ switch(first_byte & HEADER_MASK) {
 					dal_read_base = false;
 				}
 
-				if (!dal_read_base && (input_buffer_count >= 64 + curr_fbw || !read)) {
+				if (!dal_read_base && (input_buffer_count >= curr_fbw / 2 + curr_fbw || !read)) {
 					dal_read_base = true;
 
 					base_val = read_uvarint();
@@ -432,7 +432,7 @@ printf("thread %d modify int to %ld at idx %d\n", tid, *(base_out + base_write_o
 // #ifdef DEBUG
 // if (cid == 0 && tid == ERR_THREAD) printf("thread %d write int %ld at idx %d\n", tid, i, (out_8B - out));
 // #endif
-			*out_8B = i; 
+			*out_8B = (i); 
 			out_8B += BLK_SIZE;
 
 			curr_len --;
@@ -516,6 +516,8 @@ printf("thread %d modify int to %ld at idx %d\n", tid, *(base_out + base_write_o
         		curr_fbw = get_decoded_bit_width((first_byte >> 1) & 0x1f);
 				curr_fbw_left = curr_fbw;
 				read_second = false;
+
+				base_val = 0;
 			}
 
 			switch(first_byte & HEADER_MASK) {
@@ -528,8 +530,11 @@ printf("thread %d modify int to %ld at idx %d\n", tid, *(base_out + base_write_o
 					}
 					auto cnt = (first_byte & 0x07) + MINIMUM_REPEAT;
 					while (cnt-- > 0) {
+						write_int(tmp_int);
+						/*
 						*out_8B = tmp_int; 
 						out_8B += BLK_SIZE;
+						*/
 					}
 					read_first = false;
 				} 
@@ -562,6 +567,8 @@ printf("thread %d modify int to %ld at idx %d\n", tid, *(base_out + base_write_o
 					base_val += base_delta;
 					write_int(base_val);
 
+					//base_val = tmp_base_val;
+
 					base_out = out_8B;
 
 					dal_read_base = true;
@@ -572,6 +579,7 @@ printf("thread %d modify int to %ld at idx %d\n", tid, *(base_out + base_write_o
 						// var delta
 						read_longs();
                         if (curr_len <= 0) {
+							
 							if (base_delta > 0) {
 								while (base_out < out_8B) {
 									base_val = (*base_out += base_val);
@@ -715,7 +723,7 @@ printf("thread %d modify int to %ld at idx %d\n", tid, *(base_out + base_write_o
 
 
 		std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
-		decompress_func_template<<<n_chunks, BLK_SIZE>>>(d_in, n_chunks, d_blk_off, d_col_len, d_out);
+		decompress_func_non_template<<<n_chunks, BLK_SIZE>>>(d_in, n_chunks, d_blk_off, d_col_len, d_out);
 		cuda_err_chk(cudaDeviceSynchronize());
 		std::chrono::high_resolution_clock::time_point kernel_end = std::chrono::high_resolution_clock::now();
 		std::chrono::duration<double> total = std::chrono::duration_cast<std::chrono::duration<double>>(kernel_end - kernel_start);		
