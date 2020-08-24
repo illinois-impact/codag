@@ -1,8 +1,8 @@
 #ifndef _RLEV2_UTIL_H_
 #define _RLEV2_UTIL_H_
 
-#define ERR_THREAD 15
-#define ERR_CHUNK 3
+#define ERR_THREAD 8
+#define ERR_CHUNK 0
 
 constexpr int ENCODE_UNIT = 1; //each thread read 1 unit of input and proceed to next blk
 constexpr int DECODE_UNIT = 4; 

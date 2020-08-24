@@ -377,7 +377,7 @@ if (!should_write) {
                 curr_read_offset = 0;
             }
 // #ifdef DEBUG
-// if (tid == ERR_THREAD) printf("thread %u read %ld\n", tid, val);
+// if (cid == ERR_CHUNK && tid == ERR_THREAD) printf("thread %u read %lld\n", tid, val);
 // #endif
             if (num_literals == 0) {
                 literals[num_literals ++] = val;
@@ -490,7 +490,7 @@ if (!should_write) {
     }
 }
 // #ifdef DEBUG
-// if (tid == ERR_THREAD) {
+// if (cid == ERR_CHUNK && tid == ERR_THREAD) {
 //     for (int i=0; i<info.potision; i+=4) {
 //         printf("thread %d write bytes %x%x%x%x\n", tid, 
 //         info.output[i], 

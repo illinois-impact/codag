@@ -139,7 +139,7 @@ void test_encode_transpose() {
     //     }
     // }
 
-    int64_t n_digits = CHUNK_SIZE * 2 / sizeof(int64_t) ;
+    const int64_t n_digits = CHUNK_SIZE / sizeof(int64_t) ;
 
     int64_t ll[n_digits];
     for (int i=0; i<n_digits; ++i) {

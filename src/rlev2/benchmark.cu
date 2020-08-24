@@ -14,22 +14,22 @@
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "Please provide arguments\n";
+        std::cerr << "please provide arguments\n";
         exit(1);
     }
 
     int in_fd;
     struct stat in_sb;
 
-    if((in_fd = open(argv[1], O_RDONLY)) == 0) {
-        printf("Fatal Error: INPUT File open error\n");
+    if((in_fd = open(argv[1], o_rdonly)) == 0) {
+        printf("fatal error: input file open error\n");
         return -1;
     }
     fstat(in_fd, &in_sb);
 
-    int64_t *in = (int64_t *)mmap(nullptr, in_sb.st_size, PROT_READ, MAP_PRIVATE, in_fd, 0);
+    int64_t *in = (int64_t *)mmap(nullptr, in_sb.st_size, prot_read, map_private, in_fd, 0);
     if(in == (void*)-1){
-        printf("Fatal Error: INPUT Mapping error\n");
+        printf("fatal error: input mapping error\n");
         return -1;
     }
     close(in_fd);
@@ -53,8 +53,8 @@ int main(int argc, char** argv) {
     auto decode_end = std::chrono::high_resolution_clock::now();
        
     auto decomp = std::chrono::duration_cast<std::chrono::duration<double>>(decode_end - decode_start);
-    std::cout << "Decompression size: " << encoded_bytes << " bytes\n";
-    std::cout << "Decompression time: " << decomp.count() << " secs\n";
+    std::cout << "decompression size: " << encoded_bytes << " bytes\n";
+    std::cout << "decompression time: " << decomp.count() << " secs\n";
     // printf("exp(actual) %lu(%lu)\n",decoded_bytes, sizeof(ll));
     // for (int i=0; i<n_digits; ++i) {
     //     if (ll[i] != decoded[i]) {
@@ -77,5 +77,5 @@ int main(int argc, char** argv) {
     delete[] col_len;
     delete[] encoded;
     delete[] decoded;
-    if(munmap(in, in_sb.st_size) == -1) PRINT_ERROR;
+    if(munmap(in, in_sb.st_size) == -1) print_error;
 }
