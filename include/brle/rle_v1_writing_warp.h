@@ -104,12 +104,12 @@ namespace brle_trans {
 
 /*
 template<typename INPUT_T, typename READ_T>
-  __device__ void decomp_reading_warp_op(uint64_t my_chunk_size, const INPUT_T* const inTyped, simt::atomic<READ_T, simt::thread_scope_block>* in_head, 
-                              simt::atomic<READ_T, simt::thread_scope_block>* in_tail, READ_T* in_buffer){
-    uint64_t used_bytes = 0;
-    uint32_t in_off = 0;
-    int tid = threadIdx.x;
-   
+  __device__ void decomp_reading_warp_op(uint64_t my_chunk_size, const INPUT_T*
+const inTyped, simt::atomic<READ_T, simt::thread_scope_block>* in_head,
+                              simt::atomic<READ_T, simt::thread_scope_block>*
+in_tail, READ_T* in_buffer){ uint64_t used_bytes = 0; uint32_t in_off = 0; int
+tid = threadIdx.x;
+
     uint64_t readByte = sizeof(READ_T);
 
     while (used_bytes < mychunk_size) {
@@ -131,7 +131,7 @@ template<typename INPUT_T, typename READ_T>
 
         in_tail[tid].store(next_tail, simt::memory_order_release);
         used_bytes += readByte;
-      } 
+      }
       else {
         _nanosleep(100);
         goto r_read;
@@ -144,9 +144,11 @@ template<typename INPUT_T, typename READ_T>
 
 
 template<typename INPUT_T, typename READ_T>
-  __device__ void decomp_writing_warp_op(uint8_t col_idx, const* INPUT_T* const out, simt::atomic<READ_T, simt::thread_scope_block>* out_head, 
-                              simt::atomic<READ_T, simt::thread_scope_block>* out_tail, READ_T* out_buffer){
-   
+  __device__ void decomp_writing_warp_op(uint8_t col_idx, const* INPUT_T* const
+out, simt::atomic<READ_T, simt::thread_scope_block>* out_head,
+                              simt::atomic<READ_T, simt::thread_scope_block>*
+out_tail, READ_T* out_buffer){
+
 
     uint64_t writes_phases = (CHUNK_SIZE / BLK_SIZE);
     int tid = threadIdx.x;
@@ -172,17 +174,19 @@ template<typename INPUT_T, typename READ_T>
         out[out_start_idx + out_off + col_idx] = temp_out;
         out_off += 32;
     }
-  
+
   }
 
   template<typename INPUT_T, typename READ_T>
-  __device__ void decomp_computational_warp_op( simt::atomic<READ_T, simt::thread_scope_block>* in_head, 
-                              simt::atomic<READ_T, simt::thread_scope_block>* in_tail, READ_T* in_buffer, simt::atomic<READ_T, simt::thread_scope_block>* out_head, 
-                              simt::atomic<READ_T, simt::thread_scope_block>* out_tail, READ_T* out_buffer){
+  __device__ void decomp_computational_warp_op( simt::atomic<READ_T,
+simt::thread_scope_block>* in_head, simt::atomic<READ_T,
+simt::thread_scope_block>* in_tail, READ_T* in_buffer, simt::atomic<READ_T,
+simt::thread_scope_block>* out_head, simt::atomic<READ_T,
+simt::thread_scope_block>* out_tail, READ_T* out_buffer){
 
     int tid = threadIdx.x;
     uint64_t used_iterations = 0;
-   
+
     uint8_t data_buffer[DATA_BUFFER_SIZE];
     uint8_t data_buffer_head = 0;
     uint8_t data_buffer_tail = 0;
@@ -193,7 +197,7 @@ template<typename INPUT_T, typename READ_T>
 
     bool header_read = true;
     bool read_val_flag = false;
-    
+
     bool literal_flag = true;
     bool comp_flag = true;
 
@@ -214,11 +218,11 @@ template<typename INPUT_T, typename READ_T>
           goto r_compute_read;
         }
 
-      
+
       READ_T read_data = in[cur_head][tid];
       const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
       in_head[tid].store(next_head, simt::memory_order_release);
- 
+
       //assumption that there was a space to sotre a new element
       uint8_t* read_data_ptr = static_cast<uint8_t*>(&read_data);
       for(uint8_t i = 0; i < read_bytes; i++){
@@ -234,7 +238,7 @@ template<typename INPUT_T, typename READ_T>
           data_buffer_count --;
           data_buffer_head = (data_buffer_head + 1) % DATA_BUFFER_SIZE;
           header_read = false;
-      
+
           if(head_byte < 0){
             remaining = static_cast<uint64_t>(-head_byte);
             literal_flag = true;
@@ -257,14 +261,15 @@ template<typename INPUT_T, typename READ_T>
       if(read_val_flag){
           value = 0;
           int64_t offset = 0;
-         
+
           while(read_val_flag){
 
             if(data_buffer_count == 0){
 
               r_value_read:
-                const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
-                if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
+                const auto cur_head =
+in_head[tid].load(simt::memory_order_relaxed); if (cur_head ==
+in_tail[tid].load(simt::memory_order_acquire)) {
                   __nanosleep(100);
                   goto r_value_read;
                 }
@@ -273,7 +278,7 @@ template<typename INPUT_T, typename READ_T>
               READ_T read_data = in[cur_head][tid];
               const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
               in_head[tid].store(next_head, simt::memory_order_release);
-         
+
               uint8_t* read_data_ptr = static_cast<uint8_t*>(&read_data);
               for(uint8_t i = 0; i < read_bytes; i++){
                 data_buffer[data_buffer_tail] = read_data_ptr[i];
@@ -293,8 +298,8 @@ template<typename INPUT_T, typename READ_T>
               read_val_flag = false;
             }
             else{
-              value |= (static_cast<INPUT_T>(in_data) & BASE_128_MASK) << offset;
-              offset += 7;
+              value |= (static_cast<INPUT_T>(in_data) & BASE_128_MASK) <<
+offset; offset += 7;
             }
           }
       }
@@ -307,14 +312,15 @@ template<typename INPUT_T, typename READ_T>
           int64_t out_ele = value + static_cast<int64_t>(i) * delta;
 
           r_compute_write_1:
-            const auto cur_tail = out_tail[tid].load(simt::memory_order_relaxed);
-            const auto next_tail = (cur_tail + 1) % WRITING_WARP_SIZE;
+            const auto cur_tail =
+out_tail[tid].load(simt::memory_order_relaxed); const auto next_tail = (cur_tail
++ 1) % WRITING_WARP_SIZE;
 
             if (next_tail != out_head[tid].load(simt::memory_order_acquire)) {
 
               out_buffer[cur_tail][tid] = static_cast<INPUT_T>(out_ele);
               out_tail[tid].store(next_tail, simt::memory_order_release);
-            } 
+            }
             else {
               _nanosleep(100);
               goto r_compute_write_1;
@@ -336,8 +342,9 @@ template<typename INPUT_T, typename READ_T>
             if(data_buffer_count == 0){
 
               r_value_read2:
-                const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
-                if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
+                const auto cur_head =
+in_head[tid].load(simt::memory_order_relaxed); if (cur_head ==
+in_tail[tid].load(simt::memory_order_acquire)) {
                   __nanosleep(100);
                   goto r_value_read2;
                 }
@@ -346,7 +353,7 @@ template<typename INPUT_T, typename READ_T>
               READ_T read_data = in[cur_head][tid];
               const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
               in_head[tid].store(next_head, simt::memory_order_release);
-         
+
               uint8_t* read_data_ptr = static_cast<uint8_t*>(&read_data);
               for(uint8_t i = 0; i < read_bytes; i++){
                 data_buffer[data_buffer_tail] = read_data_ptr[i];
@@ -365,20 +372,21 @@ template<typename INPUT_T, typename READ_T>
               read_val_flag = false;
             }
             else{
-              value |= (static_cast<INPUT_T>(in_data) & BASE_128_MASK) << offset;
-              offset += 7;
+              value |= (static_cast<INPUT_T>(in_data) & BASE_128_MASK) <<
+offset; offset += 7;
             }
           }
 
           r_compute_write_2:
-            const auto cur_tail = out_tail[tid].load(simt::memory_order_relaxed);
-            const auto next_tail = (cur_tail + 1) % WRITING_WARP_SIZE;
+            const auto cur_tail =
+out_tail[tid].load(simt::memory_order_relaxed); const auto next_tail = (cur_tail
++ 1) % WRITING_WARP_SIZE;
 
             if (next_tail != out_head[tid].load(simt::memory_order_acquire)) {
 
               out_buffer[cur_tail][tid] = static_cast<INPUT_T>(value);
               out_tail[tid].store(next_tail, simt::memory_order_release);
-            } 
+            }
             else {
               _nanosleep(100);
               goto r_compute_write_2;
@@ -400,8 +408,8 @@ template<typename INPUT_T, typename READ_T>
 
 
 template<typename INPUT_T, typename READ_T>
-__global__ void decompress_func (const INPUT_T *const in, INPUT_T* out, const uint64_t n_chunks, 
-                                 uint64_t* col_len, uint8_t *col_map, uint64_t *blk_offset) {
+__global__ void decompress_func (const INPUT_T *const in, INPUT_T* out, const
+uint64_t n_chunks, uint64_t* col_len, uint8_t *col_map, uint64_t *blk_offset) {
 
 
   __shared__ simt::atomic<READ_T, simt::thread_scope_block> in_head[32];
@@ -426,40 +434,44 @@ __global__ void decompress_func (const INPUT_T *const in, INPUT_T* out, const ui
     out_tail[tid] = 0;
   }
   __syncthreads();
-  
+
   //reading warp
   if(which == 0){
     uint64_t mychunk_size = s_col_len[tid];
     uint64_t in_start_idx = blk_offset[chunk_idx];
     READ_T* inTyped = static_cast<READ_T*>(&(in[in_start_idx]));
-    decomp_reading_warp_op<INPUT_T, READ_T>(mychunk_size, inTyped, in_head, in_tail, in_buffer);
+    decomp_reading_warp_op<INPUT_T, READ_T>(mychunk_size, inTyped, in_head,
+in_tail, in_buffer);
   }
 
   else if(which == 1){
     uint64_t mychunk_size = s_col_len
-    decomp_writing_warp_op<INPUT_T, READ_T> (in_head, in_tail, in_buffer, out_head, out_tail, out_buffer);
+    decomp_writing_warp_op<INPUT_T, READ_T> (in_head, in_tail, in_buffer,
+out_head, out_tail, out_buffer);
   }
   //writing warp
   else{
    uint64_t col_idx = col_map[BLK_SIZE * chunk_idx + tid];
-   decomp_writing_warp_op<INPUT_T, READ_T>(col_idx, out, out_head, out_tail, out_buffer);
+   decomp_writing_warp_op<INPUT_T, READ_T>(col_idx, out, out_head, out_tail,
+out_buffer);
   }
 
 }
 */
 
-
-template<typename INPUT_T>
-__device__ void comp_reading_warp_op(uint64_t mychunk_size, const INPUT_T* const inTyped, 
-  simt::atomic<INPUT_T, simt::thread_scope_block>* in_head, simt::atomic<INPUT_T, simt::thread_scope_block>* in_tail,
-  INPUT_T* in_buffer){
+template <typename INPUT_T>
+__device__ void
+comp_reading_warp_op(uint64_t mychunk_size, const INPUT_T *const inTyped,
+                     simt::atomic<INPUT_T, simt::thread_scope_block> *in_head,
+                     simt::atomic<INPUT_T, simt::thread_scope_block> *in_tail,
+                     INPUT_T *in_buffer) {
 
   uint64_t used_bytes = 0;
   uint32_t in_off = 0;
   int tid = threadIdx.x;
   uint64_t ele_size = sizeof(INPUT_T);
 
-  while(used_bytes < mychunk_size){
+  while (used_bytes < mychunk_size) {
     unsigned mask = __activemask();
     int res = __popc(mask);
     __syncwarp(mask);
@@ -467,94 +479,94 @@ __device__ void comp_reading_warp_op(uint64_t mychunk_size, const INPUT_T* const
     INPUT_T temp_store = inTyped[in_off + tid];
     in_off += res;
 
-    r_read:
-      const auto cur_tail = in_tail[tid].load(simt::memory_order_relaxed);
-      const auto next_tail = (cur_tail + 1) % READING_WARP_SIZE;
+  r_read:
+    const auto cur_tail = in_tail[tid].load(simt::memory_order_relaxed);
+    const auto next_tail = (cur_tail + 1) % READING_WARP_SIZE;
 
-      if (next_tail != in_head[tid].load(simt::memory_order_acquire)) {
-          in_buffer[cur_tail][tid] = temp_store;
-          in_tail[tid].store(next_tail, simt::memory_order_release);
-          used_bytes += ele_size;
-      }
-      else{
-        __nanosleep(100);
-        goto r_read;
-      }
-      __syncwarp(mask);
+    if (next_tail != in_head[tid].load(simt::memory_order_acquire)) {
+      in_buffer[cur_tail][tid] = temp_store;
+      in_tail[tid].store(next_tail, simt::memory_order_release);
+      used_bytes += ele_size;
+    } else {
+      __nanosleep(100);
+      goto r_read;
+    }
+    __syncwarp(mask);
   }
 }
 
-
-
-
-__device__ uint64_t roundUpTo (uint64_t input, uint64_t unit){
+__device__ uint64_t roundUpTo(uint64_t input, uint64_t unit) {
   uint64_t val = ((input + unit - 1) / unit) * unit;
   return val;
- }
+}
 
-__device__ void write_byte_op(uint8_t* out_buffer, uint64_t* out_bytes_ptr, uint8_t write_byte, uint64_t* out_offset_ptr, uint64_t* col_len, uint8_t* col_counter_ptr){
+__device__ void write_byte_op(uint8_t *out_buffer, uint64_t *out_bytes_ptr,
+                              uint8_t write_byte, uint64_t *out_offset_ptr,
+                              uint64_t *col_len, uint8_t *col_counter_ptr) {
 
   out_buffer[*out_offset_ptr] = write_byte;
   (*out_bytes_ptr) = (*out_bytes_ptr) + 1;
 
-  //update the offset
+  // update the offset
   uint64_t out_offset = (*out_offset_ptr);
 
-  if((out_offset + 1) % COMP_WRITE_BYTES == 0){
+  if ((out_offset + 1) % COMP_WRITE_BYTES == 0) {
     *out_offset_ptr = out_offset + 1;
   }
 
-  else{
+  else {
     uint8_t col_counter = *col_counter_ptr;
     uint64_t col_start = blockIdx.x * BLK_SIZE;
-    while((*out_bytes_ptr) > roundUpTo(col_len[col_start + col_counter], COMP_WRITE_BYTES) && col_counter > 0){
+    while ((*out_bytes_ptr) >
+               roundUpTo(col_len[col_start + col_counter], COMP_WRITE_BYTES) &&
+           col_counter > 0) {
       col_counter--;
     }
-    out_offset += col_counter *COMP_WRITE_BYTES;
+    out_offset += col_counter * COMP_WRITE_BYTES;
 
     *col_counter_ptr = col_counter;
     *out_offset_ptr = out_offset;
   }
-
 }
 
-
-template<typename INPUT_T>
-__device__ void write_varint_op(uint8_t* out_buffer, uint64_t* out_bytes_ptr, INPUT_T val, uint64_t* out_offset_ptr, uint64_t* col_len, uint8_t* col_counter_ptr){
+template <typename INPUT_T>
+__device__ void write_varint_op(uint8_t *out_buffer, uint64_t *out_bytes_ptr,
+                                INPUT_T val, uint64_t *out_offset_ptr,
+                                uint64_t *col_len, uint8_t *col_counter_ptr) {
 
   INPUT_T write_val = val;
 
   uint8_t write_byte = 0;
   do {
-     uint8_t shift_literation = write_val / 128;
-     uint8_t temp = write_val >> (7 * shift_literation);
+    uint8_t shift_literation = write_val / 128;
+    uint8_t temp = write_val >> (7 * shift_literation);
 
-     write_byte = temp & 0x7F;
-    if(shift_literation == 0)
+    write_byte = temp & 0x7F;
+    if (shift_literation == 0)
       write_byte = write_byte | 0x80;
 
-    //write byte
-    write_byte_op(out_buffer, out_bytes_ptr, write_byte, out_offset_ptr, col_len, col_counter_ptr);
+    // write byte
+    write_byte_op(out_buffer, out_bytes_ptr, write_byte, out_offset_ptr,
+                  col_len, col_counter_ptr);
 
     write_val = write_val >> 7;
-  } while(write_val / 128 == 0);
-
+  } while (write_val / 128 == 0);
 }
 
-
-template<typename INPUT_T>
-__device__ void comp_computational_warp_init_op( simt::atomic<INPUT_T, simt::thread_scope_block>* in_head, 
-                              simt::atomic<INPUT_T, simt::thread_scope_block>* in_tail, INPUT_T* in_buffer, uint8_t* out_buffer,
-                              uint64_t* col_len, uint8_t* col_map, uint64_t* blk_offset,
-                               uint64_t my_chunk_size) {
+template <typename INPUT_T>
+__device__ void comp_computational_warp_init_op(
+    simt::atomic<INPUT_T, simt::thread_scope_block> *in_head,
+    simt::atomic<INPUT_T, simt::thread_scope_block> *in_tail,
+    INPUT_T *in_buffer, uint8_t *out_buffer, uint64_t *col_len,
+    uint8_t *col_map, uint64_t *blk_offset, uint64_t my_chunk_size) {
 
   __shared__ unsigned long long int block_len;
-if(threadIdx.x == 0){
-      block_len = 0;
-      if(blockIdx.x == 0){
-        blk_offset[0] = 0;
-      }
+  if (threadIdx.x == 0) {
+    block_len = 0;
+    if (blockIdx.x == 0) {
+      blk_offset[0] = 0;
     }
+  }
   int tid = threadIdx.x;
   int chunk_idx = blockIdx.x;
 
@@ -578,25 +590,24 @@ if(threadIdx.x == 0){
 
   uint64_t out_len = 0;
 
- while (used_bytes < my_chunk_size){
+  while (used_bytes < my_chunk_size) {
 
-    r_compute_read:
-      const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
-      if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
-        __nanosleep(100);
-        goto r_compute_read;
-      }
+  r_compute_read:
+    const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
+    if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
+      __nanosleep(100);
+      goto r_compute_read;
+    }
 
     INPUT_T read_data = in_buffer[cur_head][tid];
     const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
     in_head[tid].store(next_head, simt::memory_order_release);
 
-
-    //first element
-    if(used_bytes == 0){
+    // first element
+    if (used_bytes == 0) {
       delta_count = 1;
       prev_val = read_data;
-      
+
       data_buffer[data_buffer_head] = read_data;
       data_buffer_head = (data_buffer_head + 1) % 2;
       data_buffer_count++;
@@ -604,17 +615,16 @@ if(threadIdx.x == 0){
       continue;
     }
 
-    //second element to fill the buffer
-    else if(used_bytes == read_bytes){
+    // second element to fill the buffer
+    else if (used_bytes == read_bytes) {
 
       INPUT_T temp_diff = read_data - prev_val;
 
-      if(temp_diff > 127 || temp_diff < -128) {
+      if (temp_diff > 127 || temp_diff < -128) {
         delta_flag = false;
         out_len++;
         lit_count = 1;
 
-        
         INPUT_T lit_val = data_buffer[0];
         uint64_t val_bytes = roundUpTo(lit_val, 128);
 
@@ -622,9 +632,9 @@ if(threadIdx.x == 0){
         data_buffer_count--;
       }
 
-      else{
+      else {
         delta_flag = true;
-        cur_delta =  (int8_t) temp_diff;
+        cur_delta = (int8_t)temp_diff;
         delta_count++;
       }
 
@@ -635,17 +645,16 @@ if(threadIdx.x == 0){
       continue;
     }
 
-
     used_bytes += read_bytes;
 
-    if(delta_count == 1){
+    if (delta_count == 1) {
       INPUT_T temp_diff = read_data - prev_val;
 
-      if(temp_diff > 127 || temp_diff < -128) {
+      if (temp_diff > 127 || temp_diff < -128) {
 
         delta_flag = false;
 
-        if(lit_count != 0){
+        if (lit_count != 0) {
           out_len++;
           lit_count = 1;
         }
@@ -660,12 +669,10 @@ if(threadIdx.x == 0){
 
         data_buffer_count--;
 
-      }
-      else{
+      } else {
         delta_flag = true;
-        cur_delta =  (int8_t) temp_diff;
+        cur_delta = (int8_t)temp_diff;
         delta_count++;
-
       }
 
       prev_val = read_data;
@@ -675,27 +682,27 @@ if(threadIdx.x == 0){
       continue;
     }
 
-     if(prev_val + cur_delta == read_data && delta_flag){
+    if (prev_val + cur_delta == read_data && delta_flag) {
 
-        delta_count++;
-        if(delta_count == 3){
-          delta_first_val = data_buffer[data_buffer_head];
-          if(lit_count != 0){
-            lit_count  = 0;
-          }
+      delta_count++;
+      if (delta_count == 3) {
+        delta_first_val = data_buffer[data_buffer_head];
+        if (lit_count != 0) {
+          lit_count = 0;
         }
+      }
       data_buffer[data_buffer_head] = read_data;
       data_buffer_head = (data_buffer_head + 1) % 2;
-      data_buffer_count = max(data_buffer_count+1, 2);
+      data_buffer_count = max(data_buffer_count + 1, 2);
 
-     }
+    }
 
-     else{
+    else {
 
-      if(delta_count >= 3){
+      if (delta_count >= 3) {
 
-        //write count, del, val
-        out_len +=2;
+        // write count, del, val
+        out_len += 2;
         uint64_t val_bytes = roundUpTo(delta_first_val, 128);
 
         out_len += val_bytes;
@@ -706,36 +713,36 @@ if(threadIdx.x == 0){
 
         data_buffer[data_buffer_head] = read_data;
         data_buffer_head = (data_buffer_head + 1) % 2;
-        data_buffer_count = max(data_buffer_count+1, 2);
+        data_buffer_count = max(data_buffer_count + 1, 2);
         prev_val = read_data;
 
-      }
-      else{
-  
-        //first lit val
-        if(lit_count == 0){
+      } else {
+
+        // first lit val
+        if (lit_count == 0) {
           out_len++;
         }
         lit_count++;
-      
-        //write lit
+
+        // write lit
         INPUT_T lit_val = data_buffer[data_buffer_head];
-        write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
+        write_varint_op<INPUT_T>(out_buffer_ptr, lit_val, &out_bytes,
+                                 &out_offset, col_len, &col_counter);
 
         INPUT_T temp_diff = read_data - prev_val;
 
-        if(temp_diff > 127 || temp_diff < -128) {
-            delta_flag = false;
-            data_buffer_count = 0;
+        if (temp_diff > 127 || temp_diff < -128) {
+          delta_flag = false;
+          data_buffer_count = 0;
 
-            int8_t data_buffer_tail = (data_buffer_head == 0) ? (1 : 0);
-            INPUT_T lit_val = data_buffer[data_buffer_tail];
-             uint64_t val_bytes = roundUpTo(lit_val, 128);
+          int8_t data_buffer_tail = (data_buffer_head == 0) ? (1 : 0);
+          INPUT_T lit_val = data_buffer[data_buffer_tail];
+          uint64_t val_bytes = roundUpTo(lit_val, 128);
 
-             out_len += val_bytes;
+          out_len += val_bytes;
         }
 
-        else{
+        else {
           data_buffer_count = 1;
           delta_flag = true;
         }
@@ -743,59 +750,55 @@ if(threadIdx.x == 0){
         prev_val = read_data;
         data_buffer[data_buffer_head] = read_data;
         data_buffer_head = (data_buffer_head + 1) % 2;
-        data_buffer_count = max(data_buffer_count+1, 2);  
+        data_buffer_count = max(data_buffer_count + 1, 2);
       }
-
-     }
-  }
-  //write remaining elements
-  if(delta_count >= 3 && delta_flag){
-
-      out_len+=2;
-      int num_out_bytes = (delta_first_val / 128) + 1;
-      out_len += num_out_bytes;
-  }
-
-  else{
-    //update lit count
-    if(lit_count == 0){
-       out_len++;
     }
-      INPUT_T lit_val = data_buffer[data_buffer_head];
+  }
+  // write remaining elements
+  if (delta_count >= 3 && delta_flag) {
+
+    out_len += 2;
+    int num_out_bytes = (delta_first_val / 128) + 1;
+    out_len += num_out_bytes;
+  }
+
+  else {
+    // update lit count
+    if (lit_count == 0) {
+      out_len++;
+    }
+    INPUT_T lit_val = data_buffer[data_buffer_head];
+    int num_out_bytes = (lit_val / 128) + 1;
+    out_len += num_out_bytes;
+    data_buffer_head = (data_buffer_head + 1) % 2;
+
+    if (data_buffer_count == 2) {
+
+      lit_val = data_buffer[data_buffer_head];
       int num_out_bytes = (lit_val / 128) + 1;
       out_len += num_out_bytes;
-      data_buffer_head = (data_buffer_head + 1) % 2;
-      
-      if(data_buffer_count == 2){
-
-        lit_val = data_buffer[data_buffer_head];
-        int num_out_bytes = (lit_val / 128) + 1;
-        out_len += num_out_bytes;
-      }
+    }
   }
 
+  col_len[BLK_SIZE * chunk_idx + tid] = out_len;
+  uint64_t out_len_round = roundUpTo(out_len, COMP_WRITE_BYTES);
 
-col_len[BLK_SIZE*chunk_idx + tid] = out_len; 
-uint64_t out_len_round = roundUpTo(out_len, COMP_WRITE_BYTES);
-     
-      atomicAdd((unsigned long long int *)&block_len, (unsigned long long int )out_len_round);
-     __syncthreads();
-    if(threadIdx.x == 0){
-        //128B alignment
-        block_len = roundUpTo(block_len, 128);
-        blk_offset[chunk_idx+1] = (uint64_t)block_len;
-      }
-
-
+  atomicAdd((unsigned long long int *)&block_len,
+            (unsigned long long int)out_len_round);
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    // 128B alignment
+    block_len = roundUpTo(block_len, 128);
+    blk_offset[chunk_idx + 1] = (uint64_t)block_len;
+  }
 }
 
-
-
-template<typename INPUT_T>
-__device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_scope_block>* in_head, 
-                              simt::atomic<INPUT_T, simt::thread_scope_block>* in_tail, INPUT_T* in_buffer, uint8_t* out_buffer,
-                              uint64_t* col_len, uint8_t* col_map, uint64_t* blk_offset,
-                               uint64_t my_chunk_size) {
+template <typename INPUT_T>
+__device__ void comp_computational_warp_op(
+    simt::atomic<INPUT_T, simt::thread_scope_block> *in_head,
+    simt::atomic<INPUT_T, simt::thread_scope_block> *in_tail,
+    INPUT_T *in_buffer, uint8_t *out_buffer, uint64_t *col_len,
+    uint8_t *col_map, uint64_t *blk_offset, uint64_t my_chunk_size) {
 
   int tid = threadIdx.x;
 
@@ -825,35 +828,33 @@ __device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_s
   uint64_t out_start_idx = blk_offset[chunk_idx];
   uint8_t col_idx;
 
-
-
-  for(int i = 0; i < 32;i++){
-      if (tid ==  col_map[BLK_SIZE * chunk_idx + i]){
-        col_idx = i;
-      }
+  for (int i = 0; i < 32; i++) {
+    if (tid == col_map[BLK_SIZE * chunk_idx + i]) {
+      col_idx = i;
     }
+  }
 
-  uint8_t* out_buffer_ptr = &(out_buffer[out_start_idx + col_idx * COMP_WRITE_BYTES]);
+  uint8_t *out_buffer_ptr =
+      &(out_buffer[out_start_idx + col_idx * COMP_WRITE_BYTES]);
 
- while (used_bytes < my_chunk_size){
+  while (used_bytes < my_chunk_size) {
 
-    r_compute_read:
-      const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
-      if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
-        __nanosleep(100);
-        goto r_compute_read;
-      }
+  r_compute_read:
+    const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
+    if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
+      __nanosleep(100);
+      goto r_compute_read;
+    }
 
     INPUT_T read_data = in_buffer[cur_head][tid];
     const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
     in_head[tid].store(next_head, simt::memory_order_release);
 
-
-    //first element
-    if(used_bytes == 0){
+    // first element
+    if (used_bytes == 0) {
       delta_count = 1;
       prev_val = read_data;
-      
+
       data_buffer[data_buffer_head] = read_data;
       data_buffer_head = (data_buffer_head + 1) % 2;
       data_buffer_count++;
@@ -861,27 +862,28 @@ __device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_s
       continue;
     }
 
-    //second element to fill the buffer
-    else if(used_bytes == read_bytes){
+    // second element to fill the buffer
+    else if (used_bytes == read_bytes) {
 
       INPUT_T temp_diff = read_data - prev_val;
 
-      if(temp_diff > 127 || temp_diff < -128) {
+      if (temp_diff > 127 || temp_diff < -128) {
         delta_flag = false;
         lit_idx = out_offset;
-        write_varint_op<INPUT_T> (out_buffer_ptr, 1, &out_bytes, &out_offset, col_len, &col_counter);
+        write_varint_op<INPUT_T>(out_buffer_ptr, 1, &out_bytes, &out_offset,
+                                 col_len, &col_counter);
         lit_count = 1;
 
-        
         INPUT_T lit_val = data_buffer[0];
-        write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
+        write_varint_op<INPUT_T>(out_buffer_ptr, lit_val, &out_bytes,
+                                 &out_offset, col_len, &col_counter);
 
         data_buffer_count--;
       }
 
-      else{
+      else {
         delta_flag = true;
-        cur_delta =  (int8_t) temp_diff;
+        cur_delta = (int8_t)temp_diff;
         delta_count++;
       }
 
@@ -892,36 +894,35 @@ __device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_s
       continue;
     }
 
-
     used_bytes += read_bytes;
 
-    if(delta_count == 1){
+    if (delta_count == 1) {
       INPUT_T temp_diff = read_data - prev_val;
 
-      if(temp_diff > 127 || temp_diff < -128) {
+      if (temp_diff > 127 || temp_diff < -128) {
 
         delta_flag = false;
 
-        if(lit_count != 0){
+        if (lit_count != 0) {
           lit_idx = out_offset;
-          write_varint_op<INPUT_T> (out_buffer_ptr, 1, &out_bytes, &out_offset, col_len, &col_counter);
+          write_varint_op<INPUT_T>(out_buffer_ptr, 1, &out_bytes, &out_offset,
+                                   col_len, &col_counter);
           lit_count = 1;
         }
 
         int8_t data_buffer_tail = (data_buffer_head == 0) ? (1 : 0);
 
         INPUT_T lit_val = data_buffer[data_buffer_tail];
-        write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
+        write_varint_op<INPUT_T>(out_buffer_ptr, lit_val, &out_bytes,
+                                 &out_offset, col_len, &col_counter);
         lit_count++;
 
         data_buffer_count--;
 
-      }
-      else{
+      } else {
         delta_flag = true;
-        cur_delta =  (int8_t) temp_diff;
+        cur_delta = (int8_t)temp_diff;
         delta_count++;
-
       }
 
       prev_val = read_data;
@@ -931,36 +932,38 @@ __device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_s
       continue;
     }
 
-     if(prev_val + cur_delta == read_data && delta_flag){
+    if (prev_val + cur_delta == read_data && delta_flag) {
 
-        delta_count++;
-        if(delta_count == 3){
-          delta_first_val = data_buffer[data_buffer_head];
-          if(lit_count != 0){
-            //update lit counter
-            out_buffer_ptr[lit_idx] = lit_count;
-            lit_count  = 0;
-          }
+      delta_count++;
+      if (delta_count == 3) {
+        delta_first_val = data_buffer[data_buffer_head];
+        if (lit_count != 0) {
+          // update lit counter
+          out_buffer_ptr[lit_idx] = lit_count;
+          lit_count = 0;
         }
+      }
       data_buffer[data_buffer_head] = read_data;
       data_buffer_head = (data_buffer_head + 1) % 2;
-      data_buffer_count = max(data_buffer_count+1, 2);
+      data_buffer_count = max(data_buffer_count + 1, 2);
 
-     }
+    }
 
-     else{
+    else {
 
-      if(delta_count >= 3){
+      if (delta_count >= 3) {
 
-        //write count, del, val
+        // write count, del, val
         uint8_t write_byte = delta_count - 3;
-        write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset, col_len, &col_counter);
+        write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,
+                      col_len, &col_counter);
 
-        write_byte = (uint8_t) cur_delta;
-        write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset, col_len, &col_counter);
+        write_byte = (uint8_t)cur_delta;
+        write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,
+                      col_len, &col_counter);
 
-        write_varint_op<INPUT_T> (out_buffer_ptr, delta_first_val, &out_bytes, &out_offset, col_len, &col_counter);
-
+        write_varint_op<INPUT_T>(out_buffer_ptr, delta_first_val, &out_bytes,
+                                 &out_offset, col_len, &col_counter);
 
         delta_count = 1;
         data_buffer_count = 0;
@@ -968,35 +971,37 @@ __device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_s
 
         data_buffer[data_buffer_head] = read_data;
         data_buffer_head = (data_buffer_head + 1) % 2;
-        data_buffer_count = max(data_buffer_count+1, 2);
+        data_buffer_count = max(data_buffer_count + 1, 2);
         prev_val = read_data;
 
-      }
-      else{
-  
-        //first lit val
-        if(lit_count == 0){
+      } else {
+
+        // first lit val
+        if (lit_count == 0) {
           lit_idx = out_offset;
-          write_varint_op<INPUT_T> (out_buffer_ptr, 1, &out_bytes, &out_offset, col_len, &col_counter);
+          write_varint_op<INPUT_T>(out_buffer_ptr, 1, &out_bytes, &out_offset,
+                                   col_len, &col_counter);
         }
         lit_count++;
-      
-        //write lit
+
+        // write lit
         INPUT_T lit_val = data_buffer[data_buffer_head];
-        write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
+        write_varint_op<INPUT_T>(out_buffer_ptr, lit_val, &out_bytes,
+                                 &out_offset, col_len, &col_counter);
 
         INPUT_T temp_diff = read_data - prev_val;
 
-        if(temp_diff > 127 || temp_diff < -128) {
-            delta_flag = false;
-            data_buffer_count = 0;
+        if (temp_diff > 127 || temp_diff < -128) {
+          delta_flag = false;
+          data_buffer_count = 0;
 
-            int8_t data_buffer_tail = (data_buffer_head == 0) ? (1 : 0);
-            INPUT_T lit_val = data_buffer[data_buffer_tail];
-            write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
+          int8_t data_buffer_tail = (data_buffer_head == 0) ? (1 : 0);
+          INPUT_T lit_val = data_buffer[data_buffer_tail];
+          write_varint_op<INPUT_T>(out_buffer_ptr, lit_val, &out_bytes,
+                                   &out_offset, col_len, &col_counter);
         }
 
-        else{
+        else {
           data_buffer_count = 1;
           delta_flag = true;
         }
@@ -1004,124 +1009,124 @@ __device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_s
         prev_val = read_data;
         data_buffer[data_buffer_head] = read_data;
         data_buffer_head = (data_buffer_head + 1) % 2;
-        data_buffer_count = max(data_buffer_count+1, 2);  
+        data_buffer_count = max(data_buffer_count + 1, 2);
       }
-
-     }
+    }
   }
 
-  //write remaining elements
-  if(delta_count >= 3 && delta_flag){
+  // write remaining elements
+  if (delta_count >= 3 && delta_flag) {
 
     uint8_t write_byte = delta_count - 3;
-    write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset, col_len, &col_counter);
+    write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset, col_len,
+                  &col_counter);
 
-    write_byte = (uint8_t) cur_delta;
-    write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset, col_len, &col_counter);
+    write_byte = (uint8_t)cur_delta;
+    write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset, col_len,
+                  &col_counter);
 
-    write_varint_op<INPUT_T> (out_buffer_ptr, delta_first_val, &out_bytes, &out_offset, col_len, &col_counter);
+    write_varint_op<INPUT_T>(out_buffer_ptr, delta_first_val, &out_bytes,
+                             &out_offset, col_len, &col_counter);
 
-  }
-  else{
-    //update lit count
-    if(lit_count == 0){
-        lit_idx = out_offset;
-        write_varint_op<INPUT_T> (out_buffer_ptr, 1, &out_bytes, &out_offset, col_len, &col_counter);
+  } else {
+    // update lit count
+    if (lit_count == 0) {
+      lit_idx = out_offset;
+      write_varint_op<INPUT_T>(out_buffer_ptr, 1, &out_bytes, &out_offset,
+                               col_len, &col_counter);
     }
-      INPUT_T lit_val = data_buffer[data_buffer_head];
-      write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
+    INPUT_T lit_val = data_buffer[data_buffer_head];
+    write_varint_op<INPUT_T>(out_buffer_ptr, lit_val, &out_bytes, &out_offset,
+                             col_len, &col_counter);
+    lit_count++;
+
+    if (data_buffer_count == 2) {
+      data_buffer_head = (data_buffer_head + 1) % 2;
+      lit_val = data_buffer[data_buffer_head];
+      write_varint_op<INPUT_T>(out_buffer_ptr, lit_val, &out_bytes, &out_offset,
+                               col_len, &col_counter);
       lit_count++;
-      
-      if(data_buffer_count == 2){
-        data_buffer_head = (data_buffer_head + 1) % 2;
-        lit_val = data_buffer[data_buffer_head];
-        write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
-        lit_count++;
-      }
-      out_buffer_ptr[lit_idx] = lit_count;
-
+    }
+    out_buffer_ptr[lit_idx] = lit_count;
   }
-
 }
 
-template<typename INPUT_T>
-__global__ void rlev1_compress_func_init(const INPUT_T* const in, uint8_t *out,
-                              const uint64_t in_n_bytes, uint64_t *out_n_bytes,
-                              const uint64_t in_chunk_size,
-                              const uint64_t n_chunks, uint64_t *col_len,
-                              uint8_t *col_map, uint64_t *blk_offset){
+template <typename INPUT_T>
+__global__ void
+rlev1_compress_func_init(const INPUT_T *const in, uint8_t *out,
+                         const uint64_t in_n_bytes, uint64_t *out_n_bytes,
+                         const uint64_t in_chunk_size, const uint64_t n_chunks,
+                         uint64_t *col_len, uint8_t *col_map,
+                         uint64_t *blk_offset) {
 
   __shared__ simt::atomic<INPUT_T, simt::thread_scope_block> in_head[32];
   __shared__ simt::atomic<INPUT_T, simt::thread_scope_block> in_tail[32];
   __shared__ INPUT_T in_buffer[READING_WARP_SIZE][32];
 
-  int tid = threadIdx.x;
-   int which = threadIdx.y;
-
-  if(tid < 32 && which == 0) {
-    in_head[tid] = 0;
-    in_tail[tid] = 0;
-  }
-  __syncthreads();
-  //reading warp
-
-   //reading warp
-  if(which == 0){
-    uint64_t in_start_idx = in_chunk_size * blockIdx.x;
-    uint64_t mychunk_size = in_chunk_size / NUM_THREADS;
-    INPUT_T* inTyped = (&(in[in_start_idx]));
-    comp_reading_warp_op<INPUT_T>(mychunk_size, inTyped, in_head, in_tail, in_buffer);
-  }
-
-  //computational warp
-  else if(which == 1){
-    uint64_t mychunk_size = in_chunk_size / NUM_THREADS;
-    comp_computational_warp_init_op<INPUT_T> (in_head, in_tail, in_buffer, out, col_len, col_map, blk_offset, mychunk_size);
-  }
-
-
-
-}
-
-
-template<typename INPUT_T>
-__global__ void rlev1_compress_func(const INPUT_T* const in, uint8_t *out,
-                              const uint64_t in_n_bytes, uint64_t *out_n_bytes,
-                              const uint64_t in_chunk_size,
-                              const uint64_t n_chunks, uint64_t *col_len,
-                              uint8_t *col_map, uint64_t *blk_offset) {
-
-  __shared__ simt::atomic<INPUT_T, simt::thread_scope_block> in_head[32];
-  __shared__ simt::atomic<INPUT_T, simt::thread_scope_block> in_tail[32];
-  __shared__ INPUT_T in_buffer[READING_WARP_SIZE][32];
-
-  
   int tid = threadIdx.x;
   int which = threadIdx.y;
 
-  if(tid < 32 && which == 0) {
+  if (tid < 32 && which == 0) {
     in_head[tid] = 0;
     in_tail[tid] = 0;
   }
   __syncthreads();
-  //reading warp
-  if(which == 0){
+  // reading warp
+
+  // reading warp
+  if (which == 0) {
     uint64_t in_start_idx = in_chunk_size * blockIdx.x;
     uint64_t mychunk_size = in_chunk_size / NUM_THREADS;
-    INPUT_T* inTyped = (&(in[in_start_idx]));
-    comp_reading_warp_op<INPUT_T>(mychunk_size, inTyped, in_head, in_tail, in_buffer);
+    INPUT_T *inTyped = (&(in[in_start_idx]));
+    comp_reading_warp_op<INPUT_T>(mychunk_size, inTyped, in_head, in_tail,
+                                  in_buffer);
   }
 
-  //computational warp
-  else if(which == 1){
+  // computational warp
+  else if (which == 1) {
     uint64_t mychunk_size = in_chunk_size / NUM_THREADS;
-    comp_computational_warp_op<INPUT_T> (in_head, in_tail, in_buffer, out, col_len, col_map, blk_offset, mychunk_size);
+    comp_computational_warp_init_op<INPUT_T>(in_head, in_tail, in_buffer, out,
+                                             col_len, col_map, blk_offset,
+                                             mychunk_size);
   }
-
 }
 
+template <typename INPUT_T>
+__global__ void
+rlev1_compress_func(const INPUT_T *const in, uint8_t *out,
+                    const uint64_t in_n_bytes, uint64_t *out_n_bytes,
+                    const uint64_t in_chunk_size, const uint64_t n_chunks,
+                    uint64_t *col_len, uint8_t *col_map, uint64_t *blk_offset) {
 
+  __shared__ simt::atomic<INPUT_T, simt::thread_scope_block> in_head[32];
+  __shared__ simt::atomic<INPUT_T, simt::thread_scope_block> in_tail[32];
+  __shared__ INPUT_T in_buffer[READING_WARP_SIZE][32];
 
+  int tid = threadIdx.x;
+  int which = threadIdx.y;
+
+  if (tid < 32 && which == 0) {
+    in_head[tid] = 0;
+    in_tail[tid] = 0;
+  }
+  __syncthreads();
+  // reading warp
+  if (which == 0) {
+    uint64_t in_start_idx = in_chunk_size * blockIdx.x;
+    uint64_t mychunk_size = in_chunk_size / NUM_THREADS;
+    INPUT_T *inTyped = (&(in[in_start_idx]));
+    comp_reading_warp_op<INPUT_T>(mychunk_size, inTyped, in_head, in_tail,
+                                  in_buffer);
+  }
+
+  // computational warp
+  else if (which == 1) {
+    uint64_t mychunk_size = in_chunk_size / NUM_THREADS;
+    comp_computational_warp_op<INPUT_T>(in_head, in_tail, in_buffer, out,
+                                        col_len, col_map, blk_offset,
+                                        mychunk_size);
+  }
+}
 
 __global__ void ExampleKernel(uint64_t *col_len, uint8_t *col_map,
                               uint64_t *out) {
@@ -1708,8 +1713,8 @@ __host__ void decompress_gpu(const uint8_t *const in, uint8_t **out,
   // decompress_func<<<(num_blk/4), blk_size * 4>>> (d_in, d_out, num_blk,
   // d_col_len, d_col_map, d_blk_offset);
 
-  //real
-  //decompress_func<<<(num_blk), dim3(blk_size, 3, 1)>>>(
+  // real
+  // decompress_func<<<(num_blk), dim3(blk_size, 3, 1)>>>(
   //    d_in, d_out, num_blk, d_col_len, d_col_map, d_blk_offset);
 
   // decompress_func<<<(num_blk/2), blk_size*2 >>> (d_in, d_out, num_blk,
