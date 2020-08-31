@@ -659,7 +659,7 @@ __device__ void comp_computational_warp_init_op(
           lit_count = 1;
         }
 
-        int8_t data_buffer_tail = (data_buffer_head == 0) ? (1 : 0);
+        int8_t data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
 
         INPUT_T lit_val = data_buffer[data_buffer_tail];
         uint64_t val_bytes = roundUpTo(lit_val, 128);
@@ -726,16 +726,15 @@ __device__ void comp_computational_warp_init_op(
 
         // write lit
         INPUT_T lit_val = data_buffer[data_buffer_head];
-        write_varint_op<INPUT_T>(out_buffer_ptr, lit_val, &out_bytes,
-                                 &out_offset, col_len, &col_counter);
-
+	uint64_t val_bytes = roundUpTo(lit_val, 128);
+	out_len += val_bytes;
         INPUT_T temp_diff = read_data - prev_val;
 
         if (temp_diff > 127 || temp_diff < -128) {
           delta_flag = false;
           data_buffer_count = 0;
 
-          int8_t data_buffer_tail = (data_buffer_head == 0) ? (1 : 0);
+          int8_t data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
           INPUT_T lit_val = data_buffer[data_buffer_tail];
           uint64_t val_bytes = roundUpTo(lit_val, 128);
 
@@ -910,7 +909,7 @@ __device__ void comp_computational_warp_op(
           lit_count = 1;
         }
 
-        int8_t data_buffer_tail = (data_buffer_head == 0) ? (1 : 0);
+        int8_t data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
 
         INPUT_T lit_val = data_buffer[data_buffer_tail];
         write_varint_op<INPUT_T>(out_buffer_ptr, lit_val, &out_bytes,
@@ -995,7 +994,7 @@ __device__ void comp_computational_warp_op(
           delta_flag = false;
           data_buffer_count = 0;
 
-          int8_t data_buffer_tail = (data_buffer_head == 0) ? (1 : 0);
+          int8_t data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
           INPUT_T lit_val = data_buffer[data_buffer_tail];
           write_varint_op<INPUT_T>(out_buffer_ptr, lit_val, &out_bytes,
                                    &out_offset, col_len, &col_counter);
