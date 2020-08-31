@@ -560,6 +560,7 @@ if(threadIdx.x == 0){
 
   INPUT_T data_buffer[2];
   uint8_t data_buffer_head = 0;
+  uint8_t data_buffer_count = 0;
 
   uint64_t used_bytes = 0;
   uint64_t read_bytes = sizeof(INPUT_T);
@@ -567,6 +568,7 @@ if(threadIdx.x == 0){
   uint8_t delta_count = 0;
 
   int8_t cur_delta = 0;
+  bool delta_flag = false;
 
   INPUT_T delta_first_val = 0;
   INPUT_T prev_val = 0;
@@ -597,84 +599,181 @@ if(threadIdx.x == 0){
       
       data_buffer[data_buffer_head] = read_data;
       data_buffer_head = (data_buffer_head + 1) % 2;
-
+      data_buffer_count++;
       used_bytes += read_bytes;
       continue;
     }
 
-    used_bytes += read_bytes;
+    //second element to fill the buffer
+    else if(used_bytes == read_bytes){
 
-    //second element or only one element in a buffer 
-    if(delta_count == 1){
-      cur_delta =  read_data - prev_val;
-      delta_count++;
+      INPUT_T temp_diff = read_data - prev_val;
+
+      if(temp_diff > 127 || temp_diff < -128) {
+        delta_flag = false;
+        out_len++;
+        lit_count = 1;
+
+        
+        INPUT_T lit_val = data_buffer[0];
+        uint64_t val_bytes = roundUpTo(lit_val, 128);
+
+        out_len += val_bytes;
+        data_buffer_count--;
+      }
+
+      else{
+        delta_flag = true;
+        cur_delta =  (int8_t) temp_diff;
+        delta_count++;
+      }
+
       prev_val = read_data;
       data_buffer[data_buffer_head] = read_data;
       data_buffer_head = (data_buffer_head + 1) % 2;
+      data_buffer_count++;
       continue;
     }
 
-     if(prev_val + cur_delta == read_data){
+
+    used_bytes += read_bytes;
+
+    if(delta_count == 1){
+      INPUT_T temp_diff = read_data - prev_val;
+
+      if(temp_diff > 127 || temp_diff < -128) {
+
+        delta_flag = false;
+
+        if(lit_count != 0){
+          out_len++;
+          lit_count = 1;
+        }
+
+        int8_t data_buffer_tail = (data_buffer_head == 0) ? (1 : 0);
+
+        INPUT_T lit_val = data_buffer[data_buffer_tail];
+        uint64_t val_bytes = roundUpTo(lit_val, 128);
+
+        out_len += val_bytes;
+        lit_count++;
+
+        data_buffer_count--;
+
+      }
+      else{
+        delta_flag = true;
+        cur_delta =  (int8_t) temp_diff;
+        delta_count++;
+
+      }
+
+      prev_val = read_data;
+      data_buffer[data_buffer_head] = read_data;
+      data_buffer_head = (data_buffer_head + 1) % 2;
+      data_buffer_count++;
+      continue;
+    }
+
+     if(prev_val + cur_delta == read_data && delta_flag){
 
         delta_count++;
         if(delta_count == 3){
           delta_first_val = data_buffer[data_buffer_head];
+          if(lit_count != 0){
+            lit_count  = 0;
+          }
         }
-
       data_buffer[data_buffer_head] = read_data;
       data_buffer_head = (data_buffer_head + 1) % 2;
+      data_buffer_count = max(data_buffer_count+1, 2);
+
      }
 
      else{
+
       if(delta_count >= 3){
 
-        out_len+=2;
-        int num_out_bytes = (delta_first_val / 128) + 1;
-        out_len += num_out_bytes;
+        //write count, del, val
+        out_len +=2;
+        uint64_t val_bytes = roundUpTo(delta_first_val, 128);
+
+        out_len += val_bytes;
 
         delta_count = 1;
+        data_buffer_count = 0;
+        lit_count = 0;
+
+        data_buffer[data_buffer_head] = read_data;
+        data_buffer_head = (data_buffer_head + 1) % 2;
+        data_buffer_count = max(data_buffer_count+1, 2);
+        prev_val = read_data;
+
       }
       else{
   
-     
-        out_len++;
-
+        //first lit val
+        if(lit_count == 0){
+          out_len++;
+        }
         lit_count++;
       
         //write lit
         INPUT_T lit_val = data_buffer[data_buffer_head];
-      
-        int num_out_bytes = (lit_val / 128) + 1;
-        out_len += num_out_bytes;
+        write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
 
+        INPUT_T temp_diff = read_data - prev_val;
+
+        if(temp_diff > 127 || temp_diff < -128) {
+            delta_flag = false;
+            data_buffer_count = 0;
+
+            int8_t data_buffer_tail = (data_buffer_head == 0) ? (1 : 0);
+            INPUT_T lit_val = data_buffer[data_buffer_tail];
+             uint64_t val_bytes = roundUpTo(lit_val, 128);
+
+             out_len += val_bytes;
+        }
+
+        else{
+          data_buffer_count = 1;
+          delta_flag = true;
+        }
+
+        prev_val = read_data;
+        data_buffer[data_buffer_head] = read_data;
+        data_buffer_head = (data_buffer_head + 1) % 2;
+        data_buffer_count = max(data_buffer_count+1, 2);  
       }
-
-      data_buffer[data_buffer_head] = read_data;
-      data_buffer_head = (data_buffer_head + 1) % 2;
-      
-      cur_delta =  read_data - prev_val;
-      prev_val = read_data;
 
      }
   }
-
-  //rite remaining elements
-  if(delta_count >= 3){
+  //write remaining elements
+  if(delta_count >= 3 && delta_flag){
 
       out_len+=2;
       int num_out_bytes = (delta_first_val / 128) + 1;
       out_len += num_out_bytes;
   }
+
   else{
+    //update lit count
+    if(lit_count == 0){
+       out_len++;
+    }
       INPUT_T lit_val = data_buffer[data_buffer_head];
-           int num_out_bytes = (lit_val / 128) + 1;
-        out_len += num_out_bytes;
+      int num_out_bytes = (lit_val / 128) + 1;
+      out_len += num_out_bytes;
       data_buffer_head = (data_buffer_head + 1) % 2;
       
-      lit_val = data_buffer[data_buffer_head];
+      if(data_buffer_count == 2){
+
+        lit_val = data_buffer[data_buffer_head];
         int num_out_bytes = (lit_val / 128) + 1;
         out_len += num_out_bytes;
+      }
   }
+
 
 col_len[BLK_SIZE*chunk_idx + tid] = out_len; 
 uint64_t out_len_round = roundUpTo(out_len, COMP_WRITE_BYTES);
@@ -702,6 +801,7 @@ __device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_s
 
   INPUT_T data_buffer[2];
   uint8_t data_buffer_head = 0;
+  uint8_t data_buffer_count = 0;
 
   uint64_t used_bytes = 0;
   uint64_t read_bytes = sizeof(INPUT_T);
@@ -709,6 +809,7 @@ __device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_s
   uint8_t delta_count = 0;
 
   int8_t cur_delta = 0;
+  bool delta_flag = false;
 
   INPUT_T delta_first_val = 0;
   INPUT_T prev_val = 0;
@@ -723,6 +824,7 @@ __device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_s
   int chunk_idx = blockIdx.x;
   uint64_t out_start_idx = blk_offset[chunk_idx];
   uint8_t col_idx;
+
 
 
   for(int i = 0; i < 32;i++){
@@ -754,40 +856,100 @@ __device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_s
       
       data_buffer[data_buffer_head] = read_data;
       data_buffer_head = (data_buffer_head + 1) % 2;
-
+      data_buffer_count++;
       used_bytes += read_bytes;
       continue;
     }
 
-    used_bytes += read_bytes;
+    //second element to fill the buffer
+    else if(used_bytes == read_bytes){
 
-    //second element or only one element in a buffer 
-    if(delta_count == 1){
-      cur_delta =  read_data - prev_val;
-      delta_count++;
+      INPUT_T temp_diff = read_data - prev_val;
+
+      if(temp_diff > 127 || temp_diff < -128) {
+        delta_flag = false;
+        lit_idx = out_offset;
+        write_varint_op<INPUT_T> (out_buffer_ptr, 1, &out_bytes, &out_offset, col_len, &col_counter);
+        lit_count = 1;
+
+        
+        INPUT_T lit_val = data_buffer[0];
+        write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
+
+        data_buffer_count--;
+      }
+
+      else{
+        delta_flag = true;
+        cur_delta =  (int8_t) temp_diff;
+        delta_count++;
+      }
+
       prev_val = read_data;
       data_buffer[data_buffer_head] = read_data;
       data_buffer_head = (data_buffer_head + 1) % 2;
+      data_buffer_count++;
       continue;
     }
 
-     if(prev_val + cur_delta == read_data){
+
+    used_bytes += read_bytes;
+
+    if(delta_count == 1){
+      INPUT_T temp_diff = read_data - prev_val;
+
+      if(temp_diff > 127 || temp_diff < -128) {
+
+        delta_flag = false;
+
+        if(lit_count != 0){
+          lit_idx = out_offset;
+          write_varint_op<INPUT_T> (out_buffer_ptr, 1, &out_bytes, &out_offset, col_len, &col_counter);
+          lit_count = 1;
+        }
+
+        int8_t data_buffer_tail = (data_buffer_head == 0) ? (1 : 0);
+
+        INPUT_T lit_val = data_buffer[data_buffer_tail];
+        write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
+        lit_count++;
+
+        data_buffer_count--;
+
+      }
+      else{
+        delta_flag = true;
+        cur_delta =  (int8_t) temp_diff;
+        delta_count++;
+
+      }
+
+      prev_val = read_data;
+      data_buffer[data_buffer_head] = read_data;
+      data_buffer_head = (data_buffer_head + 1) % 2;
+      data_buffer_count++;
+      continue;
+    }
+
+     if(prev_val + cur_delta == read_data && delta_flag){
 
         delta_count++;
         if(delta_count == 3){
           delta_first_val = data_buffer[data_buffer_head];
           if(lit_count != 0){
             //update lit counter
-            out_buffer[lit_idx] = lit_count;
+            out_buffer_ptr[lit_idx] = lit_count;
             lit_count  = 0;
           }
         }
-
       data_buffer[data_buffer_head] = read_data;
       data_buffer_head = (data_buffer_head + 1) % 2;
+      data_buffer_count = max(data_buffer_count+1, 2);
+
      }
 
      else{
+
       if(delta_count >= 3){
 
         //write count, del, val
@@ -801,6 +963,14 @@ __device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_s
 
 
         delta_count = 1;
+        data_buffer_count = 0;
+        lit_count = 0;
+
+        data_buffer[data_buffer_head] = read_data;
+        data_buffer_head = (data_buffer_head + 1) % 2;
+        data_buffer_count = max(data_buffer_count+1, 2);
+        prev_val = read_data;
+
       }
       else{
   
@@ -815,19 +985,33 @@ __device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_s
         INPUT_T lit_val = data_buffer[data_buffer_head];
         write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
 
-      }
+        INPUT_T temp_diff = read_data - prev_val;
 
-      data_buffer[data_buffer_head] = read_data;
-      data_buffer_head = (data_buffer_head + 1) % 2;
-      
-      cur_delta =  read_data - prev_val;
-      prev_val = read_data;
+        if(temp_diff > 127 || temp_diff < -128) {
+            delta_flag = false;
+            data_buffer_count = 0;
+
+            int8_t data_buffer_tail = (data_buffer_head == 0) ? (1 : 0);
+            INPUT_T lit_val = data_buffer[data_buffer_tail];
+            write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
+        }
+
+        else{
+          data_buffer_count = 1;
+          delta_flag = true;
+        }
+
+        prev_val = read_data;
+        data_buffer[data_buffer_head] = read_data;
+        data_buffer_head = (data_buffer_head + 1) % 2;
+        data_buffer_count = max(data_buffer_count+1, 2);  
+      }
 
      }
   }
 
-  //rite remaining elements
-  if(delta_count >= 3){
+  //write remaining elements
+  if(delta_count >= 3 && delta_flag){
 
     uint8_t write_byte = delta_count - 3;
     write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset, col_len, &col_counter);
@@ -839,12 +1023,23 @@ __device__ void comp_computational_warp_op( simt::atomic<INPUT_T, simt::thread_s
 
   }
   else{
+    //update lit count
+    if(lit_count == 0){
+        lit_idx = out_offset;
+        write_varint_op<INPUT_T> (out_buffer_ptr, 1, &out_bytes, &out_offset, col_len, &col_counter);
+    }
       INPUT_T lit_val = data_buffer[data_buffer_head];
       write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
+      lit_count++;
       
-      data_buffer_head = (data_buffer_head + 1) % 2;
-      lit_val = data_buffer[data_buffer_head];
-      write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
+      if(data_buffer_count == 2){
+        data_buffer_head = (data_buffer_head + 1) % 2;
+        lit_val = data_buffer[data_buffer_head];
+        write_varint_op<INPUT_T> (out_buffer_ptr, lit_val, &out_bytes, &out_offset, col_len, &col_counter);
+        lit_count++;
+      }
+      out_buffer_ptr[lit_idx] = lit_count;
+
   }
 
 }
