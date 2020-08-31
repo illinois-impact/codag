@@ -557,7 +557,7 @@ template <typename INPUT_T>
 __device__ void comp_computational_warp_init_op(
     simt::atomic<INPUT_T, simt::thread_scope_block> *in_head,
     simt::atomic<INPUT_T, simt::thread_scope_block> *in_tail,
-    INPUT_T *in_buffer, uint8_t *out_buffer, uint64_t *col_len,
+    INPUT_T *in_buffer, uint64_t *col_len,
     uint8_t *col_map, uint64_t *blk_offset, uint64_t my_chunk_size) {
 
   __shared__ unsigned long long int block_len;
@@ -1052,8 +1052,7 @@ __device__ void comp_computational_warp_op(
 
 template <typename INPUT_T>
 __global__ void
-rlev1_compress_func_init(const INPUT_T *const in, uint8_t *out,
-                         const uint64_t in_n_bytes, uint64_t *out_n_bytes,
+rlev1_compress_func_init(const INPUT_T *const in,
                          const uint64_t in_chunk_size, const uint64_t n_chunks,
                          uint64_t *col_len, uint8_t *col_map,
                          uint64_t *blk_offset) {
@@ -1084,7 +1083,7 @@ rlev1_compress_func_init(const INPUT_T *const in, uint8_t *out,
   // computational warp
   else if (which == 1) {
     uint64_t mychunk_size = in_chunk_size / NUM_THREADS;
-    comp_computational_warp_init_op<INPUT_T>(in_head, in_tail, in_buffer, out,
+    comp_computational_warp_init_op<INPUT_T>(in_head, in_tail, in_buffer,
                                              col_len, col_map, blk_offset,
                                              mychunk_size);
   }
@@ -1565,6 +1564,14 @@ __host__ void compress_gpu(const uint8_t *const in, uint8_t **out,
   compress_init_func<<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, chunk_size,
                                              exp_out_chunk_size, n_chunks,
                                              d_col_len, d_blk_offset);
+
+  int *d_in_typed = (int*) d_in;
+rlev1_compress_func_init<int> <<<n_chunks, BLK_SIZE>>>(d_in,
+                         chunk_size, n_chunks,
+                          *col_len,  *col_map,
+                          *blk_offset);
+
+
   cuda_err_chk(cudaDeviceSynchronize());
 
   parallel_scan<<<1, 1>>>(d_blk_offset, n_chunks);
