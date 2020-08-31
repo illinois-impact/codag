@@ -464,7 +464,7 @@ __device__ void
 comp_reading_warp_op(uint64_t mychunk_size, const INPUT_T *const inTyped,
                      simt::atomic<INPUT_T, simt::thread_scope_block> *in_head,
                      simt::atomic<INPUT_T, simt::thread_scope_block> *in_tail,
-                     INPUT_T *in_buffer) {
+                     INPUT_T **in_buffer) {
 
   uint64_t used_bytes = 0;
   uint32_t in_off = 0;
@@ -557,7 +557,7 @@ template <typename INPUT_T>
 __device__ void comp_computational_warp_init_op(
     simt::atomic<INPUT_T, simt::thread_scope_block> *in_head,
     simt::atomic<INPUT_T, simt::thread_scope_block> *in_tail,
-    INPUT_T *in_buffer, uint64_t *col_len,
+    INPUT_T **in_buffer, uint64_t *col_len,
     uint8_t *col_map, uint64_t *blk_offset, uint64_t my_chunk_size) {
 
   __shared__ unsigned long long int block_len;
@@ -796,7 +796,7 @@ template <typename INPUT_T>
 __device__ void comp_computational_warp_op(
     simt::atomic<INPUT_T, simt::thread_scope_block> *in_head,
     simt::atomic<INPUT_T, simt::thread_scope_block> *in_tail,
-    INPUT_T *in_buffer, uint8_t *out_buffer, uint64_t *col_len,
+    INPUT_T **in_buffer, uint8_t *out_buffer, uint64_t *col_len,
     uint8_t *col_map, uint64_t *blk_offset, uint64_t my_chunk_size) {
 
   int tid = threadIdx.x;
@@ -1052,7 +1052,7 @@ __device__ void comp_computational_warp_op(
 
 template <typename INPUT_T>
 __global__ void
-rlev1_compress_func_init(const INPUT_T *const in,
+rlev1_compress_func_init( INPUT_T* in,
                          const uint64_t in_chunk_size, const uint64_t n_chunks,
                          uint64_t *col_len, uint8_t *col_map,
                          uint64_t *blk_offset) {
@@ -1076,14 +1076,14 @@ rlev1_compress_func_init(const INPUT_T *const in,
     uint64_t in_start_idx = in_chunk_size * blockIdx.x;
     uint64_t mychunk_size = in_chunk_size / NUM_THREADS;
     INPUT_T *inTyped = (&(in[in_start_idx]));
-    comp_reading_warp_op<INPUT_T>(mychunk_size, inTyped, in_head, in_tail,
-                                  in_buffer);
+    comp_reading_warp_op<INPUT_T>(mychunk_size, inTyped, &(in_head[0]), &(in_tail[0]),
+                                  (INPUT_T**)in_buffer);
   }
 
   // computational warp
   else if (which == 1) {
     uint64_t mychunk_size = in_chunk_size / NUM_THREADS;
-    comp_computational_warp_init_op<INPUT_T>(in_head, in_tail, in_buffer,
+    comp_computational_warp_init_op<INPUT_T>(in_head, in_tail, (INPUT_T**)in_buffer,
                                              col_len, col_map, blk_offset,
                                              mychunk_size);
   }
@@ -1565,12 +1565,13 @@ __host__ void compress_gpu(const uint8_t *const in, uint8_t **out,
                                              exp_out_chunk_size, n_chunks,
                                              d_col_len, d_blk_offset);
 
+  /*
   int *d_in_typed = (int*) d_in;
-rlev1_compress_func_init<int> <<<n_chunks, BLK_SIZE>>>(d_in,
+rlev1_compress_func_init<int> <<<n_chunks, BLK_SIZE>>>(d_in_typed,
                          chunk_size, n_chunks,
-                          *col_len,  *col_map,
-                          *blk_offset);
-
+                         d_col_len,  d_col_map,
+                          d_blk_offset);
+*/
 
   cuda_err_chk(cudaDeviceSynchronize());
 
