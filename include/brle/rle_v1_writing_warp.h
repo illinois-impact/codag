@@ -1825,7 +1825,7 @@ __host__ void compress_gpu(const uint8_t *const in, uint8_t **out,
                                              d_col_len, d_blk_offset);
 
   uint8_t *d_in_typed = (uint8_t *)d_in;
-  rlev1_compress_func_init<uint8_t><<<n_chunks, BLK_SIZE>>>(
+  rlev1_compress_func_init<uint8_t><<<n_chunks, dim3(BLK_SIZE,2,1)>>>(
       d_in_typed, chunk_size, n_chunks, d_col_len, d_col_map, d_blk_offset);
 
   cuda_err_chk(cudaDeviceSynchronize());
