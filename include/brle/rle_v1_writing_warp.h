@@ -1110,7 +1110,7 @@ rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
 
   // computational warp
   else if (which == 1) {
-    uint64_t mychunk_size = in_chunk_size / NUM_THREADS;
+    uint64_t my_chunk_size = in_chunk_size / NUM_THREADS;
     __shared__ unsigned long long int block_len;
     if (threadIdx.x == 0) {
       block_len = 0;
@@ -1342,9 +1342,9 @@ rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
       blk_offset[chunk_idx + 1] = (uint64_t)block_len;
     }
 
-    comp_computational_warp_init_op<INPUT_T>(in_head, in_tail,
-                                             (INPUT_T **)in_buffer, col_len,
-                                             col_map, blk_offset, mychunk_size);
+    //comp_computational_warp_init_op<INPUT_T>(in_head, in_tail,
+    //                                         (INPUT_T **)in_buffer, col_len,
+    //                                        col_map, blk_offset, mychunk_size);
   }
 }
 
