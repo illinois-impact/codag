@@ -102,6 +102,7 @@ constexpr uint32_t CHUNK_SIZE_4_BYTES_MASK_() {
 
 namespace brle_trans {
 
+//adf
 /*
 template<typename INPUT_T, typename READ_T>
   __device__ void decomp_reading_warp_op(uint64_t my_chunk_size, const INPUT_T*
