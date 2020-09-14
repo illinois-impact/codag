@@ -562,6 +562,8 @@ namespace rlev2 {
         auto mychunk_size = end - start;
         // printf("%lu: (%lu, %lu)\n", tid, start, end);
 
+        in += tid * CHUNK_SIZE / sizeof(int64_t);
+
         while (mychunk_size-- > 0) {
             auto val = *(in ++);
             // printf("%lu read %ld\n", tid, val);
@@ -676,16 +678,16 @@ namespace rlev2 {
         *offset = info.potision;
 
         // for (int i=0; i<info.potision; ++i) {
-        //     printf("write byte %x\n", info.output[i]);
+        //     if (tid == 1) printf("thread 1 write byte %x\n", info.output[i]);
         // }
 
-        // printf("%lu: %u\n", tid, info.potision);
+        // printf("thread %llu write out #bytes %u\n", tid, info.potision);
     }
 
     __host__ __device__ void shift_data(const uint8_t* in, uint8_t* out, const uint64_t* ptr, const uint64_t tid) {
         const auto* cur_in = in + tid * OUTPUT_CHUNK_SIZE;
         uint8_t* cur_out = out + ptr[tid];
-        memcpy(cur_out, cur_in, sizeof(uint8_t) * ptr[tid + 1] - ptr[tid]);
+        memcpy(cur_out, cur_in, sizeof(uint8_t) * (ptr[tid + 1] - ptr[tid]));
     }
 
     __global__ void kernel_shift_data(const uint8_t* in, uint8_t* out, const uint64_t* ptr, const uint64_t n_chunks) {

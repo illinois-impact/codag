@@ -5,9 +5,11 @@
 
 #include "utils.h"
 
+#include <chrono>
+
 namespace rlev2 {
 
-    __host__ __device__ inline void write_val(const int64_t& val, int64_t* &out) {
+    __host__ __device__ inline void write_val(const int64_t val, int64_t* &out) {
         *(out ++) = val;
     }
 
@@ -18,7 +20,7 @@ namespace rlev2 {
     __host__ __device__ int64_t read_long(uint8_t* &in, uint8_t num_bytes) {
         int64_t ret = 0;
         while (num_bytes-- > 0) {
-            ret |= (read_byte(in) << (num_bytes * 8));
+            ret |= ((int64_t)read_byte(in) << (num_bytes * 8));
         }
         return ret;
     }
@@ -33,7 +35,7 @@ namespace rlev2 {
             write_val(val, out);
         }
         
-        return 1 + num_bytes;
+        return num_bytes;
     }
 
     __host__ __device__ uint32_t readLongs(uint8_t*& in, int64_t*& data, uint64_t len, uint8_t fb) {
@@ -89,6 +91,7 @@ namespace rlev2 {
 
 
     __host__ __device__ uint32_t decode_delta(uint8_t* &in, uint8_t first, int64_t* &out) {
+        uint8_t *in_begin = in;
         const uint8_t encoded_fbw = (first >> 1) & 0x1f;
         const uint8_t fbw = get_decoded_bit_width(encoded_fbw);
         const uint16_t len = ((static_cast<uint16_t>(first & 0x01) << 8) | read_byte(in)) + 1;
@@ -119,15 +122,14 @@ namespace rlev2 {
                     base_val = curr[i] = base_val - curr[i];
                 }
             }
-            return consumed + 4; //2 for header, 2 for base val and base delta
         } else {
             // printf("write fixed delta\n");
             for (uint16_t i=2; i<len; ++i) {
                 base_val += base_delta;
                 write_val(base_val, out);
             }
-            return 4;
         }
+        return in - in_begin;
     }
 
     __host__ __device__ uint32_t decode_direct(uint8_t* &in, uint8_t first, int64_t* &out) {
@@ -136,10 +138,12 @@ namespace rlev2 {
         const uint8_t fbw = get_decoded_bit_width(encoded_fbw);
         const uint16_t len = ((static_cast<uint16_t>(first & 0x01) << 8) | read_byte(in)) + 1;
 
-        return 2 + readLongs(in, out, len, fbw);
+        return 1 + readLongs(in, out, len, fbw);
     }
 
     __host__ __device__ uint32_t decode_patched_base(uint8_t* &in, uint8_t first, int64_t* &out) {
+        uint8_t *in_begin = in;
+
         // printf("Decode PATCHED BASE =>>>>>>>>>>>>>>>>>>>>>.\n\n");
         const uint8_t encoded_fbw = (first >> 1) & 0x1f;
         const uint8_t fbw = get_decoded_bit_width(encoded_fbw);
@@ -180,19 +184,23 @@ namespace rlev2 {
             // printf("curr[i]: %ld\n",curr[i]);
             curr[i] += base;
         }
-        return consumed;
+        return in - in_begin;
     }
 
     __host__ __device__ void block_decode(const uint64_t tid, uint8_t* in, const uint64_t* offsets, int64_t* out) {
         uint32_t consumed = 0;
 
         auto curr_out = (int64_t*)((uint8_t*)out + tid * CHUNK_SIZE);
+
+        // printf("tid with write offset %ld\n", curr_out - out);
+
         uint8_t* curr_in = in + offsets[tid];
         const uint32_t my_chunk_size = static_cast<uint32_t>(offsets[tid + 1] - offsets[tid]);
+        // printf("tid %llu with chunk size offset %u\n", my_chunk_size);
 
-        // printf("%lu: in(%lu)\n", tid, offsets[tid]);
+        // printf("%lu: in(%lu)\n", offsets[tid]);
         while (consumed < my_chunk_size) {
-            const auto first = read_byte(curr_in);
+            const auto first = read_byte(curr_in); consumed ++;
 
             const auto encoding = static_cast<uint8_t>(first & 0xC0); // 0bxx000000
             switch(encoding) {
@@ -209,7 +217,7 @@ namespace rlev2 {
                 consumed += decode_delta(curr_in, first, curr_out);
                 break;
             }
-            // printf("%lu consumed: %u(%u)\n", tid, consumed, my_chunk_size);
+            // printf("%llu consumed: %u(%u)\n", consumed, my_chunk_size);
         }
     }
 
@@ -239,9 +247,14 @@ namespace rlev2 {
         cuda_err_chk(cudaMemcpy(d_ptr, in + sizeof(uint32_t), sizeof(uint64_t) * n_ptr, cudaMemcpyHostToDevice));
 
         uint64_t grid_size = ceil<uint64_t>(n_ptr - 1, BLK_SIZE);
+		std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
+
         kernel_decompress<<<grid_size, BLK_SIZE>>>(d_in, d_ptr, n_ptr - 1, d_out);
 
 	    cuda_err_chk(cudaDeviceSynchronize());
+        std::chrono::high_resolution_clock::time_point kernel_end = std::chrono::high_resolution_clock::now();
+		std::chrono::duration<double> total = std::chrono::duration_cast<std::chrono::duration<double>>(kernel_end - kernel_start);		
+		std::cout << "kernel time: " << total.count() << " secs\n";
 
         out = new int64_t[raw_data_bytes / sizeof(int64_t)];
 	    cuda_err_chk(cudaMemcpy(out, d_out, raw_data_bytes, cudaMemcpyDeviceToHost));
