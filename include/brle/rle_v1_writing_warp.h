@@ -22,7 +22,7 @@ constexpr uint16_t BLK_SIZE_() { return (32); }
 constexpr uint16_t BLKS_SM_() { return (THRDS_SM_() / BLK_SIZE_()); }
 constexpr uint64_t GRID_SIZE_() { return (1024); }
 constexpr uint64_t NUM_CHUNKS_() { return (GRID_SIZE_() * BLK_SIZE_()); }
-constexpr uint64_t CHUNK_SIZE_() { return (4 * 1024 * 2); }
+constexpr uint64_t CHUNK_SIZE_() { return (2 * 1024); }
 constexpr uint64_t INPUT_BUFFER_SIZE() { return (8); }
 constexpr uint64_t CHUNK_SIZE_4() { return (128); }
 
@@ -98,7 +98,7 @@ constexpr uint32_t CHUNK_SIZE_4_BYTES_MASK_() {
 #define DATA_BUFFER_SIZE 64
 #define NUM_THREADS 32
 
-#define COMP_WRITE_BYTES 1
+#define COMP_WRITE_BYTES 4
 
 #define DECOMP_READING_WARP_SIZE 16
 
@@ -108,7 +108,7 @@ namespace brle_trans {
 
 template <typename INPUT_T, typename READ_T>
 __global__ void
-rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
+rlev1_decompress_func(const int8_t *const in, INPUT_T* out, const
   uint64_t n_chunks, uint64_t* col_len, uint8_t *col_map, uint64_t *blk_offset) {
 
   __shared__ simt::atomic<uint8_t,  simt::thread_scope_block> in_head[32];
@@ -120,6 +120,11 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
   __shared__ simt::atomic<INPUT_T, simt::thread_scope_block> out_tail[32];
   __shared__ INPUT_T out_buffer[WRITING_WARP_SIZE][32];
 
+
+  __shared__  int t_done;
+
+  if(threadIdx.x == 0) 
+    t_done = 0;
 
   uint32_t which = threadIdx.y;
   int tid = threadIdx.x;
@@ -144,8 +149,6 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
     uint64_t used_bytes = 0;
     uint32_t in_read_off = 0;
 
-    // if(blockIdx.x == 0)
-    //   printf("tid: %i mychunk_size: %llu\n", tid, mychunk_size);
 
 
     while(used_bytes < mychunk_size){
@@ -165,11 +168,9 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
     
             input_buffer[cur_tail][tid] = temp_store;
 
-            // if(blockIdx.x == 0 && threadIdx.x == 2){
-            //    printf("read data: %x  in_read_off:%i\n",  temp_store, in_read_off);
-            // }
-
-
+            if(blockIdx.x == 0 && tid == 15){
+              printf("temp store: %x\n", temp_store);
+            }
 
             in_tail[tid].store(next_tail, simt::memory_order_release);
             used_bytes += sizeof(READ_T);
@@ -180,16 +181,22 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
           }
       __syncwarp(mask);
     }
+     // if(blockIdx.x == 1 && threadIdx.x == 8){
+     //           printf("read done\n" );
+     //        }
 
+  // printf("read bid:%i tid: %i done \n", blockIdx.x, tid);
+              
   }
 
   else if(which == 1){
+    
     uint64_t mychunk_size = CHUNK_SIZE / BLK_SIZE;
     uint64_t used_bytes = 0;
         uint64_t used_iterations = 0;
 
 
-    uint8_t data_buffer[DATA_BUFFER_SIZE];
+    int8_t data_buffer[DATA_BUFFER_SIZE];
     uint8_t data_buffer_head = 0;
     uint8_t data_buffer_tail = 0;
     uint8_t data_buffer_count = 0;
@@ -207,17 +214,21 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
     uint64_t remaining = 0;
 
     INPUT_T value = 0;
-    uint64_t write_iterations = (CHUNK_SIZE / BLK_SIZE);
+    //check
+    uint64_t write_iterations = (CHUNK_SIZE / BLK_SIZE) / input_byte;
 
     uint8_t delta = 0;
+    uint64_t out_start_idx = chunk_idx * CHUNK_SIZE;
+    uint64_t output_off = 0;
+    uint64_t col_idx = col_map[BLK_SIZE * chunk_idx + tid];
 
+    // if(tid == 1){
+    //   printf("bid: %i start\n", blockIdx.x);
+    // }
 
     while (used_iterations < write_iterations) {
      
-       if(blockIdx.x == 0 && threadIdx.x == 2){
-               printf("start new\n");
-            }
-
+      if(data_buffer_count == 0){
       r_decomp_compute_read:
         const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
         if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
@@ -232,20 +243,18 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
 
       READ_T temp_read_data = read_data;
 
-          if(blockIdx.x == 0 && threadIdx.x == 2){
-             printf("start read data: %x  header_read: %i  read_val_flag: %i  comp_flag: %i\n",  read_data, header_read, read_val_flag, comp_flag);
-          }
+          // if(blockIdx.x == 0 && threadIdx.x == 31){
+          //    printf("start read data: %x  header_read: %i  read_val_flag: %i  comp_flag: %i\n",  read_data, header_read, read_val_flag, comp_flag);
+          // }
 
 
-      int temp_move = (read_byte - 1) * 8;
       for(uint8_t i = 0; i < read_byte; i++){
-        uint8_t cur_temp_data = ((read_data >> temp_move) & 0xff);
-        data_buffer[data_buffer_tail] = cur_temp_data;
+        data_buffer[data_buffer_tail] = ((INPUT_T*)(&temp_read_data))[i];
         data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
-        temp_read_data -= 8;
       }
 
       data_buffer_count += read_byte;
+    }
          //need to read a header
       if(header_read){
           head_byte = data_buffer[data_buffer_head];
@@ -253,9 +262,14 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
           data_buffer_head = (data_buffer_head + 1) % DATA_BUFFER_SIZE;
           header_read = false;
 
+
           //literals
           if(head_byte < 0){
+
             remaining = static_cast<uint64_t>(-head_byte);
+            if(blockIdx.x == 0 && threadIdx.x == 2)
+            // printf("remain: %llu\n", remaining);
+           
             literal_flag = true;
             comp_flag = false;
           }
@@ -282,18 +296,16 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
 
                   READ_T temp_read_data = new_read_data;
 
-                        if(blockIdx.x == 0 && threadIdx.x == 2){
-                       printf("delta read data: %x  header_read: %i  read_val_flag: %i  comp_flag: %i\n",  new_read_data, header_read, read_val_flag, comp_flag);
+                    //     if(blockIdx.x == 0 && threadIdx.x == ){
+                    //    printf("delta read data: %x  header_read: %i  read_val_flag: %i  comp_flag: %i\n",  new_read_data, header_read, read_val_flag, comp_flag);
+                    // }
+
+
+                  
+                    for(uint8_t i = 0; i < read_byte; i++){
+                      data_buffer[data_buffer_tail] = ((INPUT_T*)(&temp_read_data))[i];
+                      data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
                     }
-
-
-                  temp_move = (read_byte - 1) * 8;
-                  for(uint8_t i = 0; i < read_byte; i++){
-                    uint8_t cur_temp_data = ((new_read_data >> temp_move) & 0xff);
-                    data_buffer[data_buffer_tail] = cur_temp_data;
-                    data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
-                    temp_read_data -= 8;
-                  }
 
                    data_buffer_count += read_byte;
             }
@@ -307,8 +319,8 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
           }
       }
 
-      if(blockIdx.x == 0 && threadIdx.x == 2)
-      printf("header done\n");
+     // if(blockIdx.x == 0 && threadIdx.x == 2)
+//      printf("header done\n");
 
       if(read_val_flag){
         value = 0;
@@ -329,19 +341,17 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
                 const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
                 in_head[tid].store(next_head, simt::memory_order_release);
 
-                    if(blockIdx.x == 0 && threadIdx.x == 2){
-                       printf("rv read data: %x  header_read: %i  read_val_flag: %i  comp_flag: %i\n",  read_data, header_read, read_val_flag, comp_flag);
-                    }
+                    // if(blockIdx.x == 0 && threadIdx.x == 2){
+                    //    printf("rv read data: %x  header_read: %i  read_val_flag: %i  comp_flag: %i\n",  read_data, header_read, read_val_flag, comp_flag);
+                    // }
 
 
                 READ_T temp_read_data = read_data;
-                int temp_move = (read_byte - 1) * 8;
-              for(uint8_t i = 0; i < read_byte; i++){
-                uint8_t cur_temp_data = ((read_data >> temp_move) & 0xff);
-                data_buffer[data_buffer_tail] = cur_temp_data;
-                data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
-                temp_read_data -= 8;
-              }
+               
+          for(uint8_t i = 0; i < read_byte; i++){
+            data_buffer[data_buffer_tail] = ((INPUT_T*)(&temp_read_data))[i];
+            data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
+          }
 
             data_buffer_count += read_byte;
           }
@@ -359,11 +369,12 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
             value |= ((static_cast<INPUT_T>(in_data) & 0x7f) << offset); 
             offset += 7;
             }
+
           }
       }
 
-      if(blockIdx.x == 0 && threadIdx.x == 2)
-      printf("read val done\n");
+    //  if(blockIdx.x == 0 && threadIdx.x == 2)
+    //  printf("read val done\n");
 
       uint64_t count = remaining;
       
@@ -372,35 +383,42 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
       if(comp_flag){
 
 
-      if(blockIdx.x == 0 && threadIdx.x == 2)
-      printf("remaining: %llu\n", remaining);
+   //   if(blockIdx.x == 0 && threadIdx.x == 2)
+    //  printf("remaining: %llu\n", remaining);
 
 
-        for(uint64_t i = 0; i < remaining; ++i){
+        for(uint64_t i = 0; i < remaining + 3; ++i){
           //push the element into the queue
 
-      if(blockIdx.x == 0 && threadIdx.x == 2)
-      printf("i: %llu\n", i);
+     // if(blockIdx.x == 0 && threadIdx.x == 2)
+     // printf("i: %llu\n", i);
 
           int64_t out_ele = value + static_cast<int64_t>(i) * delta;
 
-          r_compute_write_1:
-            const auto cur_tail = out_tail[tid].load(simt::memory_order_relaxed); 
-            const auto next_tail = (cur_tail + 1) % WRITING_WARP_SIZE;
+          // r_compute_write_1:
+          //   const auto cur_tail = out_tail[tid].load(simt::memory_order_relaxed); 
+          //   const auto next_tail = (cur_tail + 1) % WRITING_WARP_SIZE;
 
-            if (next_tail != out_head[tid].load(simt::memory_order_acquire)) {
+          //   if (next_tail != out_head[tid].load(simt::memory_order_acquire)) {
 
-              out_buffer[cur_tail][tid] = static_cast<INPUT_T>(out_ele);
-            
-            if(blockIdx.x == 0 && threadIdx.x == 2)
-                printf("out: %x\n", static_cast<INPUT_T>(out_ele));
+          //     out_buffer[cur_tail][tid] = static_cast<INPUT_T>(out_ele);
 
-              out_tail[tid].store(next_tail, simt::memory_order_release);
-            }
-            else {
-              __nanosleep(100);
-              goto r_compute_write_1;
-            }
+          //     out_tail[tid].store(next_tail, simt::memory_order_release);
+          //   }
+          //   else {
+          //     __nanosleep(100);
+          //     goto r_compute_write_1;
+          //   }
+
+          out[out_start_idx + output_off + col_idx*sizeof(READ_T)] =  static_cast<INPUT_T>(out_ele);
+          // if(blockIdx.x == 420 && threadIdx.x == 8)
+          //  printf("out comp: %x\n",  static_cast<INPUT_T>(out_ele));
+            output_off++;
+
+           if(output_off % sizeof(READ_T) == 0){
+            output_off += sizeof(READ_T) * 31;
+           }
+       
 
             used_iterations += 1;
         }
@@ -431,13 +449,12 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
               in_head[tid].store(next_head, simt::memory_order_release);
              
               READ_T temp_read_data = read_data;
-              int temp_move = (read_byte - 1) * 8;
-              for(uint8_t i = 0; i < read_byte; i++){
-                uint8_t cur_temp_data = ((read_data >> temp_move) & 0xff);
-                data_buffer[data_buffer_tail] = cur_temp_data;
-                data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
-                temp_read_data -= 8;
-              }
+             
+      for(uint8_t i = 0; i < read_byte; i++){
+        data_buffer[data_buffer_tail] = ((INPUT_T*)(&temp_read_data))[i];
+        data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
+      }
+              data_buffer_count += read_byte;
 
             }
 
@@ -446,32 +463,46 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
             data_buffer_head = (data_buffer_head + 1) % DATA_BUFFER_SIZE;
             data_buffer_count--;
 
+       
             if(in_data >= 0){
+          
               value |= (static_cast<INPUT_T>(in_data) << offset);
               read_val_flag = false;
             }
             else{
+                         
+
               value |= ((static_cast<INPUT_T>(in_data) & 0x7f) <<offset); 
               offset += 7;
             }
           }
 
-          r_compute_write_2:
-            const auto cur_tail = out_tail[tid].load(simt::memory_order_relaxed); 
-            const auto next_tail = (cur_tail+ 1) % WRITING_WARP_SIZE;
+          // r_compute_write_2:
+          //   const auto cur_tail = out_tail[tid].load(simt::memory_order_relaxed); 
+          //   const auto next_tail = (cur_tail+ 1) % WRITING_WARP_SIZE;
 
-            if (next_tail != out_head[tid].load(simt::memory_order_acquire)) {
+          //   if (next_tail != out_head[tid].load(simt::memory_order_acquire)) {
 
-              out_buffer[cur_tail][tid] = static_cast<INPUT_T>(value);
+          //     out_buffer[cur_tail][tid] = static_cast<INPUT_T>(value);
 
-              out_tail[tid].store(next_tail, simt::memory_order_release);
-                              if(blockIdx.x == 0 && threadIdx.x == 2)
-                printf("out: %x\n",  static_cast<INPUT_T>(value));
-            }
-            else {
-              __nanosleep(100);
-              goto r_compute_write_2;
-            }
+          //     out_tail[tid].store(next_tail, simt::memory_order_release);
+          //                     if(blockIdx.x == 0 && threadIdx.x == 2)
+          //       printf("out: %x\n",  static_cast<INPUT_T>(value));
+          //   }
+          //   else {
+          //     __nanosleep(100);
+          //     goto r_compute_write_2;
+          //   }
+
+           out[out_start_idx + output_off + col_idx*sizeof(READ_T)] =  static_cast<INPUT_T>(value);
+            //  if(blockIdx.x == 420 && threadIdx.x == 8)
+            // printf("out lit: %x\n",  static_cast<INPUT_T>(value));
+            output_off++;
+
+           if(output_off % sizeof(READ_T) == 0){
+            output_off += sizeof(READ_T) * 31;
+           }
+          
             used_iterations += 1;
 
         }
@@ -482,14 +513,23 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
 
     }
 
+        //if((blockIdx.x == 689))
+    //     printf("bid:%i tid: %i done \n", blockIdx.x, tid);
+              
+        // atomicAdd(&t_done, 1);
+
+        // if(t_done == 32 && blockIdx.x != 0){
+        //   printf("blockIdx: %i done \n", blockIdx.x);
+        // }
+
 
     
   }
 
   else if(which == 2){
 
-    if(blockIdx.x == 0 && threadIdx.x == 2)
-          printf("start write \n" );
+    // if(blockIdx.x == 0 && threadIdx.x == 2)
+    //       printf("start write \n" );
               
 
     uint64_t writes_phases = (CHUNK_SIZE / BLK_SIZE);
@@ -516,8 +556,8 @@ rlev1_decompress_func(const uint8_t *const in, INPUT_T* out, const
         // writing based on col_idx
         out[out_start_idx + out_off + col_idx] = temp_out;
       
-       if(blockIdx.x == 0 && threadIdx.x == 2)
-          printf("temp_out: %x\n",  temp_out);
+       // if(blockIdx.x == 0 && threadIdx.x == 2)
+       //    printf("temp_out: %x\n",  temp_out);
               
 
         out_off += 32;
@@ -538,23 +578,23 @@ __device__ uint64_t roundUpTo(uint64_t input, uint64_t unit) {
   return val;
 }
 
-__device__ void write_byte_op(uint8_t *out_buffer, uint64_t *out_bytes_ptr,
+__device__ void write_byte_op(int8_t *out_buffer, uint64_t *out_bytes_ptr,
                               uint8_t write_byte, uint64_t *out_offset_ptr,
                               uint64_t *col_len, uint8_t *col_counter_ptr) {
 
   out_buffer[*out_offset_ptr] = write_byte;
 
- // if(threadIdx.x == 0 && blockIdx.x == 0){
+ if(threadIdx.x == 1 && blockIdx.x == 0){
 
- //         printf("read data: %x  off:%llu \n",  write_byte, *out_offset_ptr);
- //      }
+         printf("write data: %x  off:%llu \n",  write_byte, *out_offset_ptr);
+      }
 
   (*out_bytes_ptr) = (*out_bytes_ptr) + 1;
 
   // update the offset
   uint64_t out_offset = (*out_offset_ptr);
 
-  if ((out_offset + 1) % COMP_WRITE_BYTES != 0) {
+  if (( (*out_bytes_ptr) ) % COMP_WRITE_BYTES != 0) {
     *out_offset_ptr = out_offset + 1;
   }
 
@@ -574,13 +614,13 @@ __device__ void write_byte_op(uint8_t *out_buffer, uint64_t *out_bytes_ptr,
 }
 
 template <typename INPUT_T>
-__device__ void write_varint_op(uint8_t *out_buffer, uint64_t *out_bytes_ptr,
+__device__ void write_varint_op(int8_t *out_buffer, uint64_t *out_bytes_ptr,
                                 INPUT_T val, uint64_t *out_offset_ptr,
                                 uint64_t *col_len, uint8_t *col_counter_ptr) {
 
   INPUT_T write_val = val;
 
-  uint8_t write_byte = 0;
+  int8_t write_byte = 0;
   do {
     //uint8_t shift_literation = write_val / 128;
    // uint8_t temp = write_val >> (7 * shift_literation);
@@ -601,13 +641,13 @@ __device__ void write_varint_op(uint8_t *out_buffer, uint64_t *out_bytes_ptr,
 
 template <typename INPUT_T, typename READ_T>
 __global__ void
-rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
+rlev1_compress_func_init(uint8_t *in, const uint64_t in_chunk_size,
                          const uint64_t n_chunks, uint64_t *col_len,
                          uint8_t *col_map, uint64_t *blk_offset) {
 
-  __shared__ simt::atomic<INPUT_T, simt::thread_scope_block> in_head[32];
-  __shared__ simt::atomic<INPUT_T, simt::thread_scope_block> in_tail[32];
-  __shared__ INPUT_T in_buffer[READING_WARP_SIZE][32];
+  __shared__ simt::atomic<uint8_t, simt::thread_scope_block> in_head[32];
+  __shared__ simt::atomic<uint8_t, simt::thread_scope_block> in_tail[32];
+  __shared__ READ_T in_buffer[READING_WARP_SIZE][32];
 
   int tid = threadIdx.x;
   int which = threadIdx.y;
@@ -630,24 +670,27 @@ rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
   if (which == 0) {
     uint64_t in_start_idx = in_chunk_size * blockIdx.x;
     uint64_t mychunk_size = in_chunk_size / NUM_THREADS;
-    INPUT_T *inTyped = (&(in[in_start_idx]));
+    READ_T *inTyped = (READ_T*)(&(in[in_start_idx]));
 
     uint64_t reading_used_bytes = 0;
     uint32_t in_off = 0;
     int tid = threadIdx.x;
-    uint64_t ele_size = sizeof(INPUT_T);
+    uint64_t ele_size = sizeof(READ_T);
 
     while (reading_used_bytes < mychunk_size) {
       unsigned mask = __activemask();
       int res = __popc(mask);
       __syncwarp(mask);
 
-      INPUT_T temp_store = inTyped[in_off + tid];
+      READ_T temp_store = inTyped[in_off + tid];
       in_off += res;
 
 
-    // if(blockIdx.x == 0 && threadIdx.x == 7 )
+    // if(blockIdx.x == 2 && threadIdx.x == 8 )
     //   printf("init data: %x\n", temp_store);
+
+      // if(blockIdx.x == 13818 && col_idx == 3 )
+      // printf("init data: %x\n", temp_store);
 
 
     r_read:
@@ -699,19 +742,42 @@ rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
 
     uint64_t out_len = 0;
 
+    const int buf_size = sizeof(READ_T)/sizeof(INPUT_T);
+
+    INPUT_T input_buffer[buf_size];
+    int input_buffer_count = 0;
+    int input_buffer_head = 0;
   
     while (used_bytes < my_chunk_size) {
 
-    r_compute_read:
-      const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
-      if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
-        __nanosleep(100);
-        goto r_compute_read;
-      }
+      if(input_buffer_count == 0){
+        r_compute_read:
+          const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
+          if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
+            __nanosleep(100);
+            goto r_compute_read;
+          }
 
-      INPUT_T read_data = in_buffer[cur_head][tid];
-      const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
-      in_head[tid].store(next_head, simt::memory_order_release);
+          READ_T in_read_data = in_buffer[cur_head][tid];
+          const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
+          in_head[tid].store(next_head, simt::memory_order_release);
+
+
+          for(int i = 0; i < buf_size; i++) {
+            input_buffer[i] = ((INPUT_T*)(&in_read_data))[i];
+
+            if(blockIdx.x == 0 && threadIdx.x == 1){
+              printf("data: %x\n", input_buffer[i]);
+            }
+
+          }
+
+          input_buffer_count = buf_size;
+          input_buffer_head = 0;
+      }
+      INPUT_T read_data = input_buffer[input_buffer_head];
+      input_buffer_head++;
+      input_buffer_count--;
 
       // first element
       if (used_bytes == 0) {
@@ -728,7 +794,7 @@ rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
       // second element to fill the buffer
       else if (used_bytes == read_bytes) {
 
-        INPUT_T temp_diff = read_data - prev_val;
+        int64_t temp_diff = read_data - prev_val;
 
 
         if (temp_diff > 127 || temp_diff < -128) {
@@ -764,14 +830,14 @@ rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
       used_bytes += read_bytes;
 
       if (delta_count == 1) {
-        INPUT_T temp_diff = read_data - prev_val;
+        int64_t temp_diff = read_data - prev_val;
 
 
         if (temp_diff > 127 || temp_diff < -128) {
 
           delta_flag = false;
 
-          if (lit_count != 0) {
+          if (lit_count == 0) {
             out_len++;
             lit_count = 1;
         
@@ -815,8 +881,8 @@ rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
         }
         data_buffer[data_buffer_head] = read_data;
         data_buffer_head = (data_buffer_head + 1) % 2;
-        data_buffer_count = max(data_buffer_count + 1, 2);
-
+        data_buffer_count = min(data_buffer_count + 1, 2);
+         prev_val = read_data;
       }
 
       else {
@@ -842,7 +908,7 @@ rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
 
           data_buffer[data_buffer_head] = read_data;
           data_buffer_head = (data_buffer_head + 1) % 2;
-          data_buffer_count = max(data_buffer_count + 1, 2);
+          data_buffer_count = min(data_buffer_count + 1, 2);
           prev_val = read_data;
 
         } else {
@@ -865,7 +931,7 @@ rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
           //     printf("valbytes 2 lit_val:%x  out_len: %llu\n", lit_val, out_len);
           //   }
 
-          INPUT_T temp_diff = read_data - prev_val;
+          int64_t temp_diff = read_data - prev_val;
 
           if (temp_diff > 127 || temp_diff < -128) {
             delta_flag = false;
@@ -879,18 +945,21 @@ rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
             //  if(threadIdx.x == 0 && blockIdx.x == 0) {
             //   printf("no\n");
             // }
+             lit_count++;
+            delta_count = 1;
           }
 
           else {
             data_buffer_count = 1;
             delta_flag = true;
-            cur_delta = temp_diff;
+            cur_delta = (int8_t) temp_diff;
+            delta_count = 2;
           }
 
           prev_val = read_data;
           data_buffer[data_buffer_head] = read_data;
           data_buffer_head = (data_buffer_head + 1) % 2;
-          data_buffer_count = max(data_buffer_count + 1, 2);
+          data_buffer_count = min(data_buffer_count + 1, 2);
         }
       }
     }
@@ -901,9 +970,7 @@ rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
     if (delta_count >= 3 && delta_flag) {
 
 
-    if(blockIdx.x == 0 && threadIdx.x == 7 )
-      printf("out len1: %llu\n", out_len);
-
+ 
       out_len += 2;
       int num_out_bytes = (delta_first_val / 128) + 1;
       out_len += num_out_bytes;
@@ -916,23 +983,32 @@ rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
       if (lit_count == 0) {
         out_len++;
       }
-      INPUT_T lit_val = data_buffer[data_buffer_head];
-      int num_out_bytes = (lit_val / 128) + 1;
-      out_len += num_out_bytes;
-      data_buffer_head = (data_buffer_head + 1) % 2;
+    
+      if(data_buffer_count == 1){
+        int data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
+        INPUT_T lit_val = data_buffer[data_buffer_tail];
+        int num_out_bytes = (lit_val / 128) + 1;
+        out_len += num_out_bytes;
+        data_buffer_head = (data_buffer_head + 1) % 2;
+
+
+      }
 
       if (data_buffer_count == 2) {
 
-        lit_val = data_buffer[data_buffer_head];
+        INPUT_T lit_val = data_buffer[data_buffer_head];
         int num_out_bytes = (lit_val / 128) + 1;
+        out_len += num_out_bytes;
+        data_buffer_head = (data_buffer_head + 1) % 2;
+
+
+        lit_val = data_buffer[data_buffer_head];
+        num_out_bytes = (lit_val / 128) + 1;
         out_len += num_out_bytes;
       }
 
     }
 
-
-    if(blockIdx.x == 0 && threadIdx.x == 7 )
-      printf("out len: %llu\n", out_len);
 
     col_len[BLK_SIZE * chunk_idx + tid] = out_len;
     uint64_t out_len_round = roundUpTo(out_len, COMP_WRITE_BYTES);
@@ -952,16 +1028,16 @@ rlev1_compress_func_init(INPUT_T *in, const uint64_t in_chunk_size,
   }
 }
 
-template <typename INPUT_T>
+template <typename INPUT_T, typename READ_T>
 __global__ void
-rlev1_compress_func(INPUT_T * in, uint8_t *out_buffer,
+rlev1_compress_func(uint8_t * in, int8_t *out_buffer,
                     // const uint64_t in_n_bytes, uint64_t *out_n_bytes,
                     const uint64_t in_chunk_size, const uint64_t n_chunks,
                     uint64_t *col_len, uint8_t *col_map, uint64_t *blk_offset) {
 
-  __shared__ simt::atomic<INPUT_T, simt::thread_scope_block> in_head[32];
-  __shared__ simt::atomic<INPUT_T, simt::thread_scope_block> in_tail[32];
-  __shared__ INPUT_T in_buffer[READING_WARP_SIZE][32];
+  __shared__ simt::atomic<uint8_t, simt::thread_scope_block> in_head[32];
+  __shared__ simt::atomic<uint8_t, simt::thread_scope_block> in_tail[32];
+  __shared__ READ_T in_buffer[READING_WARP_SIZE][32];
 
 
   int tid = threadIdx.x;
@@ -992,20 +1068,25 @@ rlev1_compress_func(INPUT_T * in, uint8_t *out_buffer,
     //                               in_buffer);
 
     uint64_t in_start_idx = in_chunk_size * blockIdx.x;
+    // if(threadIdx.x == 0 && blockIdx.x == 1){
+    //   printf("chunk: %llu\n",in_chunk_size);
+    //   printf("isi: %llu\n", in_start_idx);
+    // }
+    
     uint64_t mychunk_size = in_chunk_size / NUM_THREADS;
-    INPUT_T *inTyped = (&(in[in_start_idx]));
+    READ_T *inTyped = (READ_T*) (&(in[in_start_idx]));
 
     uint64_t reading_used_bytes = 0;
     uint32_t in_off = 0;
     int tid = threadIdx.x;
-    uint64_t ele_size = sizeof(INPUT_T);
+    uint64_t ele_size = sizeof(READ_T);
 
     while (reading_used_bytes < mychunk_size) {
       unsigned mask = __activemask();
       int res = __popc(mask);
       __syncwarp(mask);
 
-      INPUT_T temp_store = inTyped[in_off + tid];
+      READ_T temp_store = inTyped[in_off + tid];
       in_off += res;
 
     r_read:
@@ -1052,7 +1133,7 @@ rlev1_compress_func(INPUT_T * in, uint8_t *out_buffer,
     INPUT_T prev_val = 0;
 
     uint64_t lit_idx = 0;
-    uint8_t lit_count = 0;
+    int8_t lit_count = 0;
 
     uint8_t col_counter = 31;
     uint64_t out_bytes = 0;
@@ -1060,32 +1141,54 @@ rlev1_compress_func(INPUT_T * in, uint8_t *out_buffer,
 
     uint64_t out_start_idx = blk_offset[chunk_idx];
 
-
    
     //change
-    uint8_t *out_buffer_ptr =
+    int8_t *out_buffer_ptr =
         &(out_buffer[out_start_idx]);
+
+    const int buf_size = sizeof(READ_T)/sizeof(INPUT_T);
+
+    INPUT_T input_buffer[buf_size];
+    int input_buffer_count = 0;
+    int input_buffer_head = 0;
+        if(col_idx == 0 && blockIdx.x == 689){
+          printf("col idx,,,, tid: %i\n",tid);
+        }
 
     while (used_bytes < my_chunk_size) {
 
-    r_compute_read:
-      const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
-      if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
-        __nanosleep(100);
-        goto r_compute_read;
+ 
+      if(input_buffer_count == 0){
+        r_compute_read:
+          const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
+          if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
+            __nanosleep(100);
+            goto r_compute_read;
+          }
+
+          READ_T in_read_data = in_buffer[cur_head][tid];
+          const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
+          in_head[tid].store(next_head, simt::memory_order_release);
+
+
+          for(int i = 0; i < buf_size; i++) {
+            input_buffer[i] = ((INPUT_T*)(&in_read_data))[i];
+          }
+
+          input_buffer_count = buf_size;
+          input_buffer_head = 0;
       }
-
-      INPUT_T read_data = in_buffer[cur_head][tid];
-      const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
-      in_head[tid].store(next_head, simt::memory_order_release);
-
+      INPUT_T read_data = input_buffer[input_buffer_head];
+      input_buffer_head++;
+      input_buffer_count--;
 
 
-
-      // if(threadIdx.x == 7 && blockIdx.x == 0){
-      //    printf("read data: %x\n",  read_data);
+      // if(threadIdx.x == 28 && blockIdx.x == 420){
+      //    printf("read data: %x lit_count:%i delta_count: %u delta_flag:%i cur_delta:%i \n",  read_data, lit_count, delta_count, delta_flag, cur_delta);
       // }
-
+         if(col_idx == 0 && blockIdx.x == 689){
+         printf("read data: %x lit_count:%i delta_count: %u delta_flag:%i cur_delta:%i \n",  read_data, lit_count, delta_count, delta_flag, cur_delta);
+      }
       // first element
       if (used_bytes == 0) {
         delta_count = 1;
@@ -1101,7 +1204,7 @@ rlev1_compress_func(INPUT_T * in, uint8_t *out_buffer,
       // second element to fill the buffer
       else if (used_bytes == read_bytes) {
 
-        INPUT_T temp_diff = read_data - prev_val;
+        int64_t temp_diff = read_data - prev_val;
 
         if (temp_diff > 127 || temp_diff < -128) {
           delta_flag = false;
@@ -1135,17 +1238,17 @@ rlev1_compress_func(INPUT_T * in, uint8_t *out_buffer,
       used_bytes += read_bytes;
 
       if (delta_count == 1) {
-        INPUT_T temp_diff = read_data - prev_val;
+        int64_t temp_diff = read_data - prev_val;
 
         if (temp_diff > 127 || temp_diff < -128) {
 
           delta_flag = false;
 
-          if (lit_count != 0) {
+          if (lit_count == 0) {
             lit_idx = out_offset;
-            write_varint_op<INPUT_T>(out_buffer_ptr,  &out_bytes, 1, &out_offset,
+            write_byte_op(out_buffer_ptr,  &out_bytes, (uint8_t)1, &out_offset,
                                      col_len, &col_counter);
-            lit_count = 1;
+           // lit_count = 1;
           }
 
           int8_t data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
@@ -1167,6 +1270,8 @@ rlev1_compress_func(INPUT_T * in, uint8_t *out_buffer,
         data_buffer[data_buffer_head] = read_data;
         data_buffer_head = (data_buffer_head + 1) % 2;
         data_buffer_count++;
+
+
         continue;
       }
 
@@ -1177,13 +1282,17 @@ rlev1_compress_func(INPUT_T * in, uint8_t *out_buffer,
           delta_first_val = data_buffer[data_buffer_head];
           if (lit_count != 0) {
             // update lit counter
-            out_buffer_ptr[lit_idx] = lit_count;
+
+      
+
+            out_buffer_ptr[lit_idx] = static_cast<int8_t>(-lit_count);
             lit_count = 0;
           }
         }
         data_buffer[data_buffer_head] = read_data;
         data_buffer_head = (data_buffer_head + 1) % 2;
-        data_buffer_count = max(data_buffer_count + 1, 2);
+        data_buffer_count = min(data_buffer_count + 1, 2);
+        prev_val = read_data;
 
       }
 
@@ -1193,7 +1302,7 @@ rlev1_compress_func(INPUT_T * in, uint8_t *out_buffer,
         if (delta_count >= 3) {
 
           // write count, del, val
-          uint8_t write_byte = delta_count - 3;
+          int8_t write_byte = delta_count - 3;
           write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,
                         col_len, &col_counter);
 
@@ -1212,15 +1321,16 @@ rlev1_compress_func(INPUT_T * in, uint8_t *out_buffer,
 
           data_buffer[data_buffer_head] = read_data;
           data_buffer_head = (data_buffer_head + 1) % 2;
-          data_buffer_count = max(data_buffer_count + 1, 2);
+          data_buffer_count = min(data_buffer_count + 1, 2);
           prev_val = read_data;
 
         } else {
 
           // first lit val
+ 
           if (lit_count == 0) {
             lit_idx = out_offset;
-            write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, 1,  &out_offset,
+            write_byte_op(out_buffer_ptr, &out_bytes, (uint8_t) 3,  &out_offset,
                                      col_len, &col_counter);
           }
           lit_count++;
@@ -1230,7 +1340,7 @@ rlev1_compress_func(INPUT_T * in, uint8_t *out_buffer,
           write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, lit_val,
                                    &out_offset, col_len, &col_counter);
 
-          INPUT_T temp_diff = read_data - prev_val;
+          int64_t temp_diff = read_data - prev_val;
 
           if (temp_diff > 127 || temp_diff < -128) {
             delta_flag = false;
@@ -1240,33 +1350,32 @@ rlev1_compress_func(INPUT_T * in, uint8_t *out_buffer,
             INPUT_T lit_val = data_buffer[data_buffer_tail];
             write_varint_op<INPUT_T>(out_buffer_ptr,  &out_bytes, lit_val,
                                      &out_offset, col_len, &col_counter);
+            
+
+            lit_count++;
+            delta_count = 1;
           }
 
           else {
             data_buffer_count = 1;
             delta_flag = true;
-            cur_delta = temp_diff;
+            cur_delta = (int8_t) temp_diff;
+            delta_count = 2;
           }
 
           prev_val = read_data;
           data_buffer[data_buffer_head] = read_data;
           data_buffer_head = (data_buffer_head + 1) % 2;
-          data_buffer_count = max(data_buffer_count + 1, 2);
+          data_buffer_count = min(data_buffer_count + 1, 2);
         }
       }
     }
+ 
 
     // write remaining elements
     if (delta_count >= 3 && delta_flag) {
 
-      uint8_t write_byte = delta_count - 3;
-
-
-
-      if(threadIdx.x == 7 && blockIdx.x == 0){
-         printf("write byte: %x\n",  write_byte);
-      }
-
+      int8_t write_byte = delta_count - 3;
 
       write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,  col_len,
                     &col_counter);
@@ -1279,25 +1388,46 @@ rlev1_compress_func(INPUT_T * in, uint8_t *out_buffer,
                                &out_offset, col_len, &col_counter);
 
     } else {
+
+
+     
+
       // update lit count
       if (lit_count == 0) {
         lit_idx = out_offset;
         write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, 1,  &out_offset,
                                  col_len, &col_counter);
       }
-      INPUT_T lit_val = data_buffer[data_buffer_head];
-      write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, lit_val, &out_offset,
-                               col_len, &col_counter);
-      lit_count++;
+
+      if(data_buffer_count == 1){
+        int8_t data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
+            INPUT_T lit_val = data_buffer[data_buffer_tail];
+          write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, lit_val, &out_offset,
+                                 col_len, &col_counter);
+          lit_count++;
+      }
 
       if (data_buffer_count == 2) {
+        INPUT_T lit_val = data_buffer[data_buffer_head];
+        write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, lit_val, &out_offset,
+                               col_len, &col_counter);
+        lit_count++;
+
         data_buffer_head = (data_buffer_head + 1) % 2;
         lit_val = data_buffer[data_buffer_head];
         write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, lit_val, &out_offset,
                                  col_len, &col_counter);
         lit_count++;
       }
-      out_buffer_ptr[lit_idx] = lit_count;
+
+      // if(tid== 25 && blockIdx.x == 13818)
+      //   printf("l count: %x\n", lit_count);
+        //   if(tid == 9 && blockIdx.x == 33){
+        //   printf("lit_idx:%x lit count: %x\n", lit_idx, lit_count);
+        // }
+
+
+      out_buffer_ptr[lit_idx] = (-lit_count);
     }
 
 
@@ -1695,7 +1825,7 @@ __global__ void compress_func(const uint8_t *const in, uint8_t *out,
 __host__ void compress_gpu(const uint8_t *const in, uint8_t **out,
                            const uint64_t in_n_bytes, uint64_t *out_n_bytes) {
   uint8_t *d_in;
-  uint8_t *d_out;
+  int8_t *d_out;
   uint8_t *temp;
 
   uint64_t padded_in_n_bytes =
@@ -1740,9 +1870,8 @@ __host__ void compress_gpu(const uint8_t *const in, uint8_t **out,
 
   cuda_err_chk(cudaMemcpy(d_in, in, in_n_bytes, cudaMemcpyHostToDevice));
 
-    uint8_t *d_in_typed = (uint8_t *)d_in;
   rlev1_compress_func_init<uint8_t, uint32_t><<<n_chunks, dim3(BLK_SIZE,2,1)>>>(
-      d_in_typed, chunk_size, n_chunks, d_col_len, d_col_map, d_blk_offset);
+      d_in, chunk_size, n_chunks, d_col_len, d_col_map, d_blk_offset);
 
 
   cuda_err_chk(cudaDeviceSynchronize());
@@ -1786,7 +1915,7 @@ __host__ void compress_gpu(const uint8_t *const in, uint8_t **out,
 
 
 
-rlev1_compress_func <uint8_t> <<< n_chunks, dim3(BLK_SIZE,2,1)>>> (d_in_typed, d_out, chunk_size, n_chunks, d_col_len_sorted, d_col_map, d_blk_offset);
+rlev1_compress_func <uint8_t, uint32_t> <<< n_chunks, dim3(BLK_SIZE,2,1)>>> (d_in, d_out, chunk_size, n_chunks, d_col_len_sorted, d_col_map, d_blk_offset);
 
   cuda_err_chk(cudaDeviceSynchronize());
 
@@ -1875,7 +2004,7 @@ __host__ void decompress_gpu(const uint8_t *const in, uint8_t **out,
   std::chrono::high_resolution_clock::time_point kernel_start =
       std::chrono::high_resolution_clock::now();
 
-  uint8_t *d_in;
+  int8_t *d_in;
   uint8_t *d_out;
 
   uint64_t *d_col_len;
@@ -1930,8 +2059,8 @@ __host__ void decompress_gpu(const uint8_t *const in, uint8_t **out,
 // rlev1_decompress_func(const int8_t *const in, INPUT_T* out, const
 //   uint64_t n_chunks, uint64_t* col_len, uint8_t *col_map, uint64_t *blk_offset) {
 
-  uint8_t* d_out_Typed = static_cast<uint8_t*>(d_out);
-  rlev1_decompress_func<uint8_t, uint8_t><<<(num_blk), dim3(blk_size, 3, 1)>>>(d_in, d_out_Typed, num_blk, d_col_len, d_col_map, d_blk_offset);
+  uint8_t* d_out_Typed = (uint8_t*)(d_out);
+  rlev1_decompress_func<uint8_t, uint32_t><<<(num_blk ), dim3(blk_size, 2, 1)>>>(d_in, d_out_Typed, num_blk, d_col_len, d_col_map, d_blk_offset);
 
 
   cudaDeviceSynchronize();
