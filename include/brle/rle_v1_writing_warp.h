@@ -102,7 +102,7 @@ constexpr uint32_t CHUNK_SIZE_4_BYTES_MASK_() {
 
 namespace brle_trans {
 
-
+//rlev1 reading
 
 template <typename INPUT_T, typename READ_T>
 __global__ void
