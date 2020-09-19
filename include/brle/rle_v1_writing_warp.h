@@ -98,9 +98,6 @@ constexpr uint32_t CHUNK_SIZE_4_BYTES_MASK_() {
 #define DATA_BUFFER_SIZE 64
 #define NUM_THREADS 32
 
-//#define COMP_WRITE_BYTES 2
-//#define DECOMP_WRITE_BYTES 1
-
 #define DECOMP_READING_WARP_SIZE 16
 
 namespace brle_trans {
@@ -335,8 +332,6 @@ rlev1_decompress_func(const int8_t *const in, INPUT_T* out, const
                
           for(uint8_t i = 0; i < read_byte; i++){
             data_buffer[data_buffer_tail] = ((int8_t*)(&temp_read_data))[i];
-         
-          
             data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
           }
 
@@ -358,7 +353,6 @@ rlev1_decompress_func(const int8_t *const in, INPUT_T* out, const
             value |= ((static_cast<INPUT_T>(in_data) & 0x7f) << offset); 
             offset += 7;
             }
-
           }
       }
 
@@ -373,14 +367,9 @@ rlev1_decompress_func(const int8_t *const in, INPUT_T* out, const
 
         for(uint64_t i = 0; i < remaining + 3; ++i){
        
-
           int64_t out_ele = value + static_cast<int64_t>(i) * delta;
-
-
           out[out_start_idx + output_off + col_idx * DECOMP_WRITE_BYTES] =  static_cast<INPUT_T>(out_ele);
-       
           output_off++;
-
            if(output_off % DECOMP_WRITE_BYTES == 0){
             output_off +=  DECOMP_WRITE_BYTES * 31;
            }
@@ -532,9 +521,8 @@ __device__ void write_byte_op(int8_t *out_buffer, uint64_t *out_bytes_ptr,
 
   else {
     uint8_t col_counter = *col_counter_ptr;
-    uint64_t col_start = blockIdx.x * BLK_SIZE;
     while ((*out_bytes_ptr) >
-               roundUpTo(col_len[col_start + col_counter], COMP_WRITE_BYTES) &&
+               roundUpTo(col_len[ col_counter], COMP_WRITE_BYTES) &&
            col_counter > 0) {
       col_counter--;
     }
@@ -1009,7 +997,7 @@ rlev1_compress_func(uint8_t * in, int8_t *out_buffer,
   __shared__ simt::atomic<uint8_t, simt::thread_scope_block> in_tail[32];
   __shared__ READ_T in_buffer[READING_WARP_SIZE][32];
 
-  
+  __shared__ uint64_t s_col_len[32];
 
 
   int tid = threadIdx.x;
@@ -1021,6 +1009,7 @@ rlev1_compress_func(uint8_t * in, int8_t *out_buffer,
   if (tid < 32 && which == 0) {
     in_head[tid] = 0;
     in_tail[tid] = 0;
+    s_col_len[tid] = col_len[blockIdx.x * BLK_SIZE + tid];
   }
 
  for (int i = 0; i < 32; i++) {
@@ -1164,12 +1153,12 @@ rlev1_compress_func(uint8_t * in, int8_t *out_buffer,
           delta_flag = false;
           lit_idx = out_offset;
           write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, 1, &out_offset,
-                                   col_len, &col_counter, COMP_WRITE_BYTES);
+                                   s_col_len, &col_counter, COMP_WRITE_BYTES);
           lit_count = 1;
 
           INPUT_T lit_val = data_buffer[0];
           write_varint_op<INPUT_T>(out_buffer_ptr,  &out_bytes, lit_val,
-                                   &out_offset, col_len, &col_counter, COMP_WRITE_BYTES);
+                                   &out_offset, s_col_len, &col_counter, COMP_WRITE_BYTES);
 
           data_buffer_count--;
         }
@@ -1201,7 +1190,7 @@ rlev1_compress_func(uint8_t * in, int8_t *out_buffer,
           if (lit_count == 0) {
             lit_idx = out_offset;
             write_byte_op(out_buffer_ptr,  &out_bytes, (uint8_t)1, &out_offset,
-                                     col_len, &col_counter, COMP_WRITE_BYTES);
+                                     s_col_len, &col_counter, COMP_WRITE_BYTES);
            // lit_count = 1;
           }
 
@@ -1209,7 +1198,7 @@ rlev1_compress_func(uint8_t * in, int8_t *out_buffer,
 
           INPUT_T lit_val = data_buffer[data_buffer_tail];
           write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, lit_val, 
-                                   &out_offset, col_len, &col_counter, COMP_WRITE_BYTES);
+                                   &out_offset, s_col_len, &col_counter, COMP_WRITE_BYTES);
           lit_count++;
 
           data_buffer_count--;
@@ -1258,16 +1247,16 @@ rlev1_compress_func(uint8_t * in, int8_t *out_buffer,
           // write count, del, val
           int8_t write_byte = delta_count - 3;
           write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,
-                        col_len, &col_counter,COMP_WRITE_BYTES);
+                        s_col_len, &col_counter,COMP_WRITE_BYTES);
 
 
           write_byte = (uint8_t)cur_delta;
           write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,
-                        col_len, &col_counter,COMP_WRITE_BYTES);
+                        s_col_len, &col_counter,COMP_WRITE_BYTES);
           
    
           write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, delta_first_val, 
-                                   &out_offset, col_len, &col_counter, COMP_WRITE_BYTES);
+                                   &out_offset, s_col_len, &col_counter, COMP_WRITE_BYTES);
    
           delta_count = 1;
           data_buffer_count = 0;
@@ -1285,14 +1274,14 @@ rlev1_compress_func(uint8_t * in, int8_t *out_buffer,
           if (lit_count == 0) {
             lit_idx = out_offset;
             write_byte_op(out_buffer_ptr, &out_bytes, (uint8_t) 3,  &out_offset,
-                                     col_len, &col_counter, COMP_WRITE_BYTES);
+                                     s_col_len, &col_counter, COMP_WRITE_BYTES);
           }
           lit_count++;
 
           // write lit
           INPUT_T lit_val = data_buffer[data_buffer_head];
           write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, lit_val,
-                                   &out_offset, col_len, &col_counter, COMP_WRITE_BYTES);
+                                   &out_offset, s_col_len, &col_counter, COMP_WRITE_BYTES);
 
           int64_t temp_diff = read_data - prev_val;
 
@@ -1303,7 +1292,7 @@ rlev1_compress_func(uint8_t * in, int8_t *out_buffer,
             int8_t data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
             INPUT_T lit_val = data_buffer[data_buffer_tail];
             write_varint_op<INPUT_T>(out_buffer_ptr,  &out_bytes, lit_val,
-                                     &out_offset, col_len, &col_counter, COMP_WRITE_BYTES);
+                                     &out_offset, s_col_len, &col_counter, COMP_WRITE_BYTES);
             
 
             lit_count++;
@@ -1331,15 +1320,15 @@ rlev1_compress_func(uint8_t * in, int8_t *out_buffer,
 
       int8_t write_byte = delta_count - 3;
 
-      write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,  col_len,
+      write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,  s_col_len,
                     &col_counter, COMP_WRITE_BYTES);
 
       write_byte = (uint8_t)cur_delta;
-      write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset, col_len,
+      write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset, s_col_len,
                     &col_counter, COMP_WRITE_BYTES);
 
       write_varint_op<INPUT_T>(out_buffer_ptr,  &out_bytes, delta_first_val,
-                               &out_offset, col_len, &col_counter, COMP_WRITE_BYTES);
+                               &out_offset, s_col_len, &col_counter, COMP_WRITE_BYTES);
 
     } else {
 
@@ -1350,27 +1339,27 @@ rlev1_compress_func(uint8_t * in, int8_t *out_buffer,
       if (lit_count == 0) {
         lit_idx = out_offset;
         write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, 1,  &out_offset,
-                                 col_len, &col_counter, COMP_WRITE_BYTES);
+                                 s_col_len, &col_counter, COMP_WRITE_BYTES);
       }
 
       if(data_buffer_count == 1){
         int8_t data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
             INPUT_T lit_val = data_buffer[data_buffer_tail];
           write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, lit_val, &out_offset,
-                                 col_len, &col_counter, COMP_WRITE_BYTES);
+                                 s_col_len, &col_counter, COMP_WRITE_BYTES);
           lit_count++;
       }
 
       if (data_buffer_count == 2) {
         INPUT_T lit_val = data_buffer[data_buffer_head];
         write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, lit_val, &out_offset,
-                               col_len, &col_counter, COMP_WRITE_BYTES);
+                               s_col_len, &col_counter, COMP_WRITE_BYTES);
         lit_count++;
 
         data_buffer_head = (data_buffer_head + 1) % 2;
         lit_val = data_buffer[data_buffer_head];
         write_varint_op<INPUT_T>(out_buffer_ptr, &out_bytes, lit_val, &out_offset,
-                                 col_len, &col_counter, COMP_WRITE_BYTES);
+                                 s_col_len, &col_counter, COMP_WRITE_BYTES);
         lit_count++;
       }
 
