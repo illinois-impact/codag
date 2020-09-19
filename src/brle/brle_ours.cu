@@ -1,5 +1,6 @@
 #include <common.h>
-#include <brle/brle_trans.h>
+//#include <brle/brle_trans.h>
+#include <brle/rle_v1_writing_warp.h>
 #include <unistd.h>
 #include <iostream>
 #include <cstring>
@@ -11,20 +12,27 @@
 #include <chrono>
 
 int main(int argc, char** argv) {
-    if (argc < 3) {
-      std::cerr << "Please provide arguments\n";
+    if (argc < 5) {
+      std::cerr << "Please provide arguments input output input_bytes read_bytes \n";
       exit(1);
     }
 
     bool decomp = (strcmp(argv[1],"-d")==0);
-    if (decomp && (argc < 4)) {
-      std::cerr << "Please provide arguments\n";
+    if (decomp && (argc < 6)) {
+      std::cerr << "Please provide arguments input output -d input_bytes read_bytes \n";
       exit(1);
     }
 
     const char* input = decomp ? argv[2] : argv[1];
     const char* output = decomp ? argv[3] : argv[2];
+    const char* s_input_bytes = decomp ? argv[4] : argv[3];
+    const char* s_read_bytes = decomp ? argv[5] : argv[4];
 
+    int input_bytes = std::atoi(s_input_bytes);
+    int read_bytes = std::atoi(s_read_bytes);
+
+    std::cout << "input bytes: " << input_bytes << std::endl;
+ std::cout << "read bytes: " << read_bytes << std::endl;
     
     std::chrono::high_resolution_clock::time_point total_start = std::chrono::high_resolution_clock::now();
     int in_fd;
@@ -58,10 +66,16 @@ int main(int argc, char** argv) {
     uint64_t out_size;
     std::chrono::high_resolution_clock::time_point compress_start = std::chrono::high_resolution_clock::now();
     if (!decomp) {
-        brle_trans::compress_gpu(in_, &out_, in_sb.st_size, &out_size);
+	    std::cout << "start\n";
+    	    if((input_bytes) == 1 && (read_bytes) == 1){
+			std::cout << "1-1\n";
+	    	    brle_trans::compress_gpu<uint8_t, uint8_t>(in_, &out_, in_sb.st_size, &out_size);
+	    }
+
+        //brle_trans::compress_gpu<uint8_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
     }
     else {
-        brle_trans::decompress_gpu(in_, &out_, in_sb.st_size, &out_size);
+        brle_trans::decompress_gpu<uint8_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
     }
 
     std::chrono::high_resolution_clock::time_point compress_end = std::chrono::high_resolution_clock::now();
