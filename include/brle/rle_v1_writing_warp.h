@@ -212,7 +212,7 @@ rlev1_compress_multi_reading_init(uint8_t *in, const uint64_t in_chunk_size,
     int8_t cur_delta = 0;
     bool delta_flag = false;
     uint64_t lit_idx = 0;
-    uint8_t lit_count = 0;
+    uint16_t lit_count = 0;
     INPUT_T prev_val = 0;
 
     //output length
@@ -244,6 +244,10 @@ rlev1_compress_multi_reading_init(uint8_t *in, const uint64_t in_chunk_size,
       if(word_head == num_words){
         word_head = 0;
         queue_head++;
+      }
+
+      if(lit_count == 127) {
+        lit_count = 0;
       }
 
       //first element
@@ -305,7 +309,9 @@ rlev1_compress_multi_reading_init(uint8_t *in, const uint64_t in_chunk_size,
             out_len++;
             lit_count = 1;
           }
-
+          if (lit_count == 0) 
+            out_len++;
+          
           int8_t data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
           INPUT_T lit_val = data_buffer[data_buffer_tail];
           uint64_t val_bytes = 1;
@@ -340,6 +346,21 @@ rlev1_compress_multi_reading_init(uint8_t *in, const uint64_t in_chunk_size,
             lit_count = 0;
           }
         }
+       else if(delta_count == 130){
+          out_len += 2;
+          INPUT_T lit_val = delta_first_val;
+          uint64_t val_bytes = 1;
+          lit_val = lit_val / 128;
+          while(lit_val != 0){
+            val_bytes++;
+            lit_val = lit_val / 128;
+          }
+          out_len += val_bytes;
+          delta_count = 1;
+          data_buffer_count = 0;
+          lit_count = 0;
+        }
+
         data_buffer[data_buffer_head] = read_data;
         data_buffer_head = (data_buffer_head + 1) % 2;
         data_buffer_count = min(data_buffer_count + 1, 2);
@@ -386,9 +407,15 @@ rlev1_compress_multi_reading_init(uint8_t *in, const uint64_t in_chunk_size,
           }
           out_len += val_bytes;
 
+          if(lit_count == 127)
+            lit_count = 0;
+
           int64_t temp_diff = read_data - prev_val;
 
           if (temp_diff > 127 || temp_diff < -128) {
+            if(lit_count == 0)
+              out_len++
+
             delta_flag = false;
             data_buffer_count = 0;
 
@@ -436,10 +463,16 @@ rlev1_compress_multi_reading_init(uint8_t *in, const uint64_t in_chunk_size,
     }
 
     else {
-      if (lit_count == 0) 
+      if (lit_count == 127)
+        lit_count = 0;
+
+      if (lit_count == 0 && data_buffer_count != 0) 
         out_len++;
       
       if(data_buffer_count == 1){
+        if (lit_count == 0) 
+            out_len++;
+
         int data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
         INPUT_T lit_val = data_buffer[data_buffer_tail];
         uint64_t num_out_bytes = 1;
@@ -450,9 +483,16 @@ rlev1_compress_multi_reading_init(uint8_t *in, const uint64_t in_chunk_size,
         }
         out_len += num_out_bytes;
         data_buffer_head = (data_buffer_head + 1) % 2;
+
+        lit_count ++;
+        if(lit_count == 127)
+          lit_count = 0;
       }
 
       if (data_buffer_count == 2) {
+
+        if(lit_count == 0)
+          out_len++;
 
         INPUT_T lit_val = data_buffer[data_buffer_head];
         uint64_t num_out_bytes = 1;
