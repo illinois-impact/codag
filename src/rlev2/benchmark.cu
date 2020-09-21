@@ -12,6 +12,53 @@
 #include <rlev2/rlev2.h>
 #include <cuda/atomic>
 
+template<int R>
+void benchmark(int64_t* in, uint64_t size) {
+    uint8_t *encoded = nullptr;
+    uint64_t encoded_bytes = 0;
+
+    blk_off_t *blk_off;
+    col_len_t *col_len;
+    uint64_t n_chunks;
+
+    auto encode_start = std::chrono::high_resolution_clock::now();
+    rlev2::compress_gpu_transpose<read_unit>(in, in_sb.st_size, encoded, encoded_bytes, n_chunks, blk_off, col_len);
+    auto encode_end = std::chrono::high_resolution_clock::now();
+
+    int64_t *decoded = nullptr;
+    uint64_t decoded_bytes = 0;
+
+    auto decode_start = std::chrono::high_resolution_clock::now();
+    rlev2::decompress_gpu<read_unit>(encoded, encoded_bytes, n_chunks, blk_off, col_len, decoded, decoded_bytes);
+    auto decode_end = std::chrono::high_resolution_clock::now();
+        
+    auto decomp = std::chrono::duration_cast<std::chrono::duration<double>>(decode_end - decode_start);
+    std::cout << "decompression size: " << encoded_bytes << " bytes\n";
+    std::cout << "decompression time: " << decomp.count() << " secs\n";
+    // printf("exp(actual) %lu(%lu)\n",decoded_bytes, sizeof(ll));
+    // for (int i=0; i<n_digits; ++i) {
+    //     if (ll[i] != decoded[i]) {
+    //         printf("failed at %d\n", i);
+    //         break;
+
+    //     }
+    //     // printf("%ld : %ld\n", ll[i], decompressed[i]);
+    // }
+    
+    assert(decoded_bytes == in_sb.st_size);
+    for (int i=0; i<decoded_bytes/sizeof(int64_t); ++i) {
+        if (decoded[i] != in[i]) {
+            printf("fail at %d %ld(%ld)\n", i, in[i], decoded[i]);
+        }
+        assert(decoded[i] == in[i]);
+    }
+
+    delete[] blk_off;
+    delete[] col_len;
+    delete[] encoded;
+    delete[] decoded;
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         std::cerr << "please provide arguments\n";
@@ -34,53 +81,10 @@ int main(int argc, char** argv) {
     }
     close(in_fd);
 
-    uint8_t *encoded = nullptr;
-    uint64_t encoded_bytes = 0;
-
-    blk_off_t *blk_off;
-    col_len_t *col_len;
-    uint64_t n_chunks;
-
-    static int READ_UNITS[4] = {1, 2, 4, 8};
-
-    for (auto read_unit: READ_UNITS) {
-        auto encode_start = std::chrono::high_resolution_clock::now();
-        rlev2::compress_gpu_transpose<read_unit>(in, in_sb.st_size, encoded, encoded_bytes, n_chunks, blk_off, col_len);
-        auto encode_end = std::chrono::high_resolution_clock::now();
-    
-        int64_t *decoded = nullptr;
-        uint64_t decoded_bytes = 0;
-    
-        auto decode_start = std::chrono::high_resolution_clock::now();
-        rlev2::decompress_gpu<read_unit>(encoded, encoded_bytes, n_chunks, blk_off, col_len, decoded, decoded_bytes);
-        auto decode_end = std::chrono::high_resolution_clock::now();
-           
-        auto decomp = std::chrono::duration_cast<std::chrono::duration<double>>(decode_end - decode_start);
-        std::cout << "decompression size: " << encoded_bytes << " bytes\n";
-        std::cout << "decompression time: " << decomp.count() << " secs\n";
-        // printf("exp(actual) %lu(%lu)\n",decoded_bytes, sizeof(ll));
-        // for (int i=0; i<n_digits; ++i) {
-        //     if (ll[i] != decoded[i]) {
-        //         printf("failed at %d\n", i);
-        //         break;
-    
-        //     }
-        //     // printf("%ld : %ld\n", ll[i], decompressed[i]);
-        // }
-        
-        assert(decoded_bytes == in_sb.st_size);
-        for (int i=0; i<decoded_bytes/sizeof(int64_t); ++i) {
-             if (decoded[i] != in[i]) {
-                 printf("fail at %d %ld(%ld)\n", i, in[i], decoded[i]);
-             }
-            assert(decoded[i] == in[i]);
-        }
-    
-        delete[] blk_off;
-        delete[] col_len;
-        delete[] encoded;
-        delete[] decoded;
-    }
+    benchmark<1>(in, in_sb.st_size);
+    benchmark<2>(in, in_sb.st_size);
+    benchmark<4>(in, in_sb.st_size);
+    benchmark<8>(in, in_sb.st_size);
 
     
     if(munmap(in, in_sb.st_size) == -1) PRINT_ERROR;
