@@ -182,7 +182,7 @@ namespace rlev2 {
         uint32_t cid = blockIdx.x;
 
         int64_t in_start_limit = min((cid + 1) * CHUNK_SIZE, in_n_bytes) / sizeof(int64_t);
-        int64_t in_start = cid * CHUNK_SIZE / sizeof(int64_t) + tid * ENCODE_UNIT;
+        int64_t in_start = cid * CHUNK_SIZE / sizeof(int64_t) + tid * read_unit;
 
         //TODO: Make this more intelligent
         // uint8_t* out_4B = blk_off[cid] - blk_off[0] + WRITE_UNIT * tid;

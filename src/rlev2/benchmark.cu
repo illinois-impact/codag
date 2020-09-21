@@ -12,7 +12,7 @@
 #include <rlev2/rlev2.h>
 #include <cuda/atomic>
 
-template<int R>
+template<int read_unit>
 void benchmark(int64_t* in, uint64_t size) {
     uint8_t *encoded = nullptr;
     uint64_t encoded_bytes = 0;
@@ -22,7 +22,7 @@ void benchmark(int64_t* in, uint64_t size) {
     uint64_t n_chunks;
 
     auto encode_start = std::chrono::high_resolution_clock::now();
-    rlev2::compress_gpu_transpose<read_unit>(in, in_sb.st_size, encoded, encoded_bytes, n_chunks, blk_off, col_len);
+    rlev2::compress_gpu_transpose<read_unit>(in, size, encoded, encoded_bytes, n_chunks, blk_off, col_len);
     auto encode_end = std::chrono::high_resolution_clock::now();
 
     int64_t *decoded = nullptr;
@@ -45,7 +45,7 @@ void benchmark(int64_t* in, uint64_t size) {
     //     // printf("%ld : %ld\n", ll[i], decompressed[i]);
     // }
     
-    assert(decoded_bytes == in_sb.st_size);
+    assert(decoded_bytes == size);
     for (int i=0; i<decoded_bytes/sizeof(int64_t); ++i) {
         if (decoded[i] != in[i]) {
             printf("fail at %d %ld(%ld)\n", i, in[i], decoded[i]);
