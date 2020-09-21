@@ -4,7 +4,8 @@
 #define ERR_THREAD 8
 #define ERR_CHUNK 0
 
-constexpr int ENCODE_UNIT = 1; //each thread read 1 unit of input and proceed to next blk
+
+constexpr int READ_GRANULARITY = 1;
 constexpr int DECODE_UNIT = 4; 
 constexpr uint64_t VARINT_MASK = 0x7f;
 

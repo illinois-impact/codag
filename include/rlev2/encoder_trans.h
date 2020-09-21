@@ -325,7 +325,7 @@ namespace rlev2 {
 
     }
 
-    template<bool should_write>
+    template<bool should_write, int READ_UNIT>
     __global__ void block_encode(int64_t* in, const uint64_t in_n_bytes, 
             uint8_t* out, col_len_t* acc_col_len, blk_off_t* blk_off) {
 
@@ -344,7 +344,7 @@ if (!should_write) {
     __syncthreads();
 }
         int64_t in_start_limit = min((cid + 1) * CHUNK_SIZE, in_n_bytes) / sizeof(int64_t);
-        int64_t in_start = cid * CHUNK_SIZE / sizeof(int64_t) + tid * ENCODE_UNIT;
+        int64_t in_start = cid * CHUNK_SIZE / sizeof(int64_t) + tid * READ_UNIT;
 
         //TODO: Make this more intelligent
         // uint8_t* out_4B = blk_off[cid] - blk_off[0] + WRITE_UNIT * tid;
@@ -372,8 +372,8 @@ if (!should_write) {
         while (true) {
             if (in_start + curr_read_offset >= in_start_limit) break;
             auto val = in[in_start + curr_read_offset]; curr_read_offset ++;
-            if (curr_read_offset == ENCODE_UNIT) {
-                in_start += BLK_SIZE * ENCODE_UNIT;
+            if (curr_read_offset == READ_UNIT) {
+                in_start += BLK_SIZE * READ_UNIT;
                 curr_read_offset = 0;
             }
 // #ifdef DEBUG
@@ -590,6 +590,7 @@ if (!should_write) {
         }
     }
 
+    template <int READ_UNIT>
     __host__
     void compress_gpu_transpose(const int64_t* const in, const uint64_t in_n_bytes, uint8_t*& out, uint64_t& out_n_bytes,
                     uint64_t& out_n_chunks, blk_off_t *&blk_off, col_len_t *&col_len) {
@@ -618,7 +619,7 @@ if (!should_write) {
         
         initialize_bit_maps();
 
-        block_encode<false><<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
+        block_encode<false, READ_UNIT><<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
                 d_out, d_col_len,  d_blk_off);
 
 	    cuda_err_chk(cudaDeviceSynchronize()); 
@@ -631,7 +632,7 @@ if (!should_write) {
 
         // block_encode_new_write<<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
         //                     d_out, d_acc_col_len,  d_blk_off);
-        block_encode<true><<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
+        block_encode<true, READ_UNIT><<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
                             d_out, d_acc_col_len,  d_blk_off);
 	    cuda_err_chk(cudaDeviceSynchronize()); 
 

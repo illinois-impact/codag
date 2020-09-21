@@ -14,6 +14,7 @@
 //constexpr int SHM_BUFFER_COUNT = DECODE_BUFFER_COUNT * BLK_SIZE;
 
 namespace rlev2 {
+	template <int READ_UNIT>
 	__global__ void decompress_func_template(const uint8_t* __restrict__ in, const uint64_t n_chunks, const blk_off_t* __restrict__ blk_off, const col_len_t* __restrict__ col_len, int64_t* __restrict__ out) {
 		auto tid = threadIdx.x;
 		auto cid = blockIdx.x;
@@ -26,7 +27,7 @@ namespace rlev2 {
 		uint32_t* in_4B = (uint32_t *)(&(in[in_start_idx]));
 		uint32_t in_4B_off = 0;
 
-		int64_t* out_8B = out + (out_start_idx + tid * ENCODE_UNIT); 
+		int64_t* out_8B = out + (out_start_idx + tid * READ_UNIT); 
 		// printf("out off %lu for thread %d\n", out_start_idx + tid * 1, tid);
 
 		// uint8_t input_buffer[DECODE_BUFFER_COUNT];
@@ -79,9 +80,9 @@ namespace rlev2 {
 
 			*(out_8B + curr_write_offset) = i; 
             curr_write_offset ++;
-            if (curr_write_offset == ENCODE_UNIT) {
+            if (curr_write_offset == READ_UNIT) {
                 curr_write_offset = 0;
-                out_8B += BLK_SIZE * ENCODE_UNIT;
+                out_8B += BLK_SIZE * READ_UNIT;
             }
 
 			curr_len --;
@@ -164,9 +165,9 @@ namespace rlev2 {
 					while (cnt-- > 0) {
 						*(out_8B + curr_write_offset) = tmp_int; 
                         curr_write_offset ++;
-                        if (curr_write_offset == ENCODE_UNIT) {
+                        if (curr_write_offset == READ_UNIT) {
                             curr_write_offset = 0;
-						    out_8B += BLK_SIZE * ENCODE_UNIT;
+						    out_8B += BLK_SIZE * READ_UNIT;
                         }
 					}
 					curr_schm = 0;
@@ -293,7 +294,7 @@ namespace rlev2 {
 						}
 
 						patch_gap += curr_64 >> pw;
-						base_out[(patch_gap / ENCODE_UNIT) * BLK_SIZE + (patch_gap % ENCODE_UNIT)] |= static_cast<int64_t>(curr_64 & patch_mask) << curr_fbw;
+						base_out[(patch_gap / READ_UNIT) * BLK_SIZE + (patch_gap % READ_UNIT)] |= static_cast<int64_t>(curr_64 & patch_mask) << curr_fbw;
 
 						pll --;
 						curr_64 = 0;
@@ -628,6 +629,8 @@ namespace rlev2 {
 
 }
 */
+
+	template<int READ_UNIT>
 	__host__
 	void decompress_gpu(const uint8_t *in, const uint64_t in_n_bytes, const uint64_t n_chunks,
 			blk_off_t *blk_off, col_len_t *col_len,
@@ -654,7 +657,7 @@ namespace rlev2 {
 
 		std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
 		// decompress_func_write_sync<<<n_chunks, dim3(BLK_SIZE, 2, 1)>>>(d_in, n_chunks, d_blk_off, d_col_len, d_out);
-		decompress_func_template<<<n_chunks, BLK_SIZE>>>(d_in, n_chunks, d_blk_off, d_col_len, d_out);
+		decompress_func_template<READ_UNIT><<<n_chunks, BLK_SIZE>>>(d_in, n_chunks, d_blk_off, d_col_len, d_out);
 		cuda_err_chk(cudaDeviceSynchronize());
 		std::chrono::high_resolution_clock::time_point kernel_end = std::chrono::high_resolution_clock::now();
 		std::chrono::duration<double> total = std::chrono::duration_cast<std::chrono::duration<double>>(kernel_end - kernel_start);		
