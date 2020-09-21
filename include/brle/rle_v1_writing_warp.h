@@ -162,9 +162,9 @@ rlev1_compress_multi_reading_init(uint8_t *in, const uint64_t in_chunk_size,
                          const uint64_t n_chunks, uint64_t *col_len,
                          uint8_t *col_map, uint64_t *blk_offset, int COMP_WRITE_BYTES) {
 
-  __shared__ READ_T reading_queue [32][32];
-  __shared__ bool read_flag[32];
-  __shared__ uint8_t read_off[32];
+  volatile __shared__ READ_T reading_queue [32][32];
+  volatile __shared__ bool read_flag[32];
+  volatile __shared__ uint8_t read_off[32];
   __shared__ unsigned long long int block_len;
     
   
@@ -180,7 +180,7 @@ rlev1_compress_multi_reading_init(uint8_t *in, const uint64_t in_chunk_size,
       read_off[tid] = 0;
     }
     if(tid == 0){
-      block_len == 0;
+      block_len = 0;
       if(blockIdx.x == 0)
         blk_offset[0] = 0;
     }
@@ -241,13 +241,8 @@ rlev1_compress_multi_reading_init(uint8_t *in, const uint64_t in_chunk_size,
     uint8_t word_head = 0;
     uint8_t num_words = sizeof(READ_T) / sizeof(INPUT_T);
     uint32_t read_bytes = sizeof(INPUT_T);
-
     uint64_t used_bytes = 0;
     uint64_t my_chunk_size = in_chunk_size / 32;
-
-    //change it later
-    uint32_t used_iterations = 0;
-    uint32_t total_iterations = in_chunk_size / (32 * sizeof(READ_T) * 32);
 
     INPUT_T data_buffer[2];
     uint8_t data_buffer_head = 0;
@@ -258,7 +253,6 @@ rlev1_compress_multi_reading_init(uint8_t *in, const uint64_t in_chunk_size,
     uint16_t delta_count = 0;
     int8_t cur_delta = 0;
     bool delta_flag = false;
-    uint64_t lit_idx = 0;
     uint16_t lit_count = 0;
     INPUT_T prev_val = 0;
 
@@ -267,9 +261,6 @@ rlev1_compress_multi_reading_init(uint8_t *in, const uint64_t in_chunk_size,
 
     //buffer for data tranportation from shared queue to thread reg
     const int buf_size = (sizeof(READ_T)/sizeof(INPUT_T)) * 32;
-    INPUT_T input_buffer[buf_size];
-    int input_buffer_count = 0;
-    int input_buffer_head = 0;
 
     while (used_bytes < my_chunk_size) {
 
@@ -569,10 +560,13 @@ rlev1_compress_multi_reading_init(uint8_t *in, const uint64_t in_chunk_size,
     }
 
 
+ 
+
     col_len[BLK_SIZE * chunk_idx + tid] = out_len;
     uint64_t out_len_round = roundUpTo(out_len, COMP_WRITE_BYTES);
     atomicAdd((unsigned long long int *)&block_len,
               (unsigned long long int)out_len_round);
+  
     __syncthreads();
     
     if (threadIdx.x == 0) {
@@ -594,9 +588,9 @@ rlev1_compress_multi_reading(uint8_t * in, int8_t *out_buffer,
                     const uint64_t in_chunk_size, const uint64_t n_chunks,
                     uint64_t *col_len, uint8_t *col_map, uint64_t *blk_offset, int COMP_WRITE_BYTES) {
 
-  __shared__ READ_T reading_queue [32][32];
-  __shared__ bool read_flag[32];
-  __shared__ uint8_t read_off[32];
+ volatile  __shared__ READ_T reading_queue [32][32];
+ volatile  __shared__ bool read_flag[32];
+ volatile  __shared__ uint8_t read_off[32];
   __shared__ uint64_t s_col_len[32];
 
   int tid = threadIdx.x;
@@ -678,10 +672,6 @@ rlev1_compress_multi_reading(uint8_t * in, int8_t *out_buffer,
     uint64_t used_bytes = 0;
     uint64_t my_chunk_size = in_chunk_size / 32;
 
-    //change it later
-    uint32_t used_iterations = 0;
-    uint32_t total_iterations = in_chunk_size / (32 * sizeof(READ_T) * 32);
-
     INPUT_T data_buffer[2];
     uint8_t data_buffer_head = 0;
     uint8_t data_buffer_count = 0;
@@ -701,12 +691,6 @@ rlev1_compress_multi_reading(uint8_t * in, int8_t *out_buffer,
     uint64_t out_offset = col_idx * COMP_WRITE_BYTES;
     uint64_t out_start_idx = blk_offset[chunk_idx];
     int8_t *out_buffer_ptr = &(out_buffer[out_start_idx]);
-
-    //buffer for data tranportation from shared queue to thread reg
-    const int buf_size = (sizeof(READ_T)/sizeof(INPUT_T)) * 32;
-    INPUT_T input_buffer[buf_size];
-    int input_buffer_count = 0;
-    int input_buffer_head = 0;
 
     while (used_bytes < my_chunk_size) {
     //if input_buffer is empty, then send a read request
@@ -964,9 +948,6 @@ rlev1_compress_multi_reading(uint8_t * in, int8_t *out_buffer,
 
 template <typename INPUT_T, typename READ_T>
 __global__ void
-//out changed to READ_T
-//tid should be matched to the output col
-//in_chunk_size
 rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, 
   const uint64_t in_chunk_size, uint64_t* col_len, uint8_t *col_map, uint64_t *blk_offset, int DECOMP_WRITE_BYTES) {
 
@@ -980,8 +961,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
  volatile  __shared__ bool write_accept[32];
  volatile  __shared__ bool write_buffer_flag[32];
  volatile  __shared__ uint8_t write_off[32];
-
-  __shared__ uint64_t s_col_map[32];
 
   int tid = threadIdx.x;
   int chunk_idx = blockIdx.x;
@@ -1006,7 +985,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
   //reading warp
   if(which == 0){
 
-    READ_T* in_READ = (READ_T *)(&(in[in_start_idx]));
     uint64_t mychunk_size = col_len[BLK_SIZE * chunk_idx + tid];
     uint64_t used_bytes = 0;
     uint32_t in_read_off = 0;
@@ -1048,8 +1026,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
   }
 
   else if (which == 1){
-    uint64_t mychunk_size = CHUNK_SIZE / BLK_SIZE;
-    uint64_t used_bytes = 0;
     uint64_t used_iterations = 0;
 
     int8_t data_buffer[DATA_BUFFER_SIZE];
@@ -1062,7 +1038,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
 
     bool header_read = true;
     bool read_val_flag = false;
-    bool literal_flag = true;
     bool comp_flag = true;
     int8_t head_byte = 0;
     uint64_t remaining = 0;
@@ -1072,7 +1047,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
 
     uint8_t delta = 0;
     uint64_t out_start_idx = chunk_idx * CHUNK_SIZE / input_byte;
-    uint64_t output_off = 0;
     uint8_t col_idx = col_map[BLK_SIZE * chunk_idx + tid];
 
     READ_T out_write_buffer[32];
@@ -1116,13 +1090,11 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
           //literals
           if(head_byte < 0){
             remaining = static_cast<uint64_t>(-head_byte);
-            literal_flag = true;
             comp_flag = false;
           }
           //compresssed data
           else{
             remaining = static_cast<uint64_t>(head_byte);
-            literal_flag = false;
             comp_flag = true;
 
             //may have to check the count
@@ -1191,19 +1163,15 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
           }
       }
 
-      uint64_t count = remaining;
       if(comp_flag){
         for(uint64_t i = 0; i < remaining + 3; ++i){
           int64_t out_ele = value + static_cast<int64_t>(i) * delta;
 
-        // if(tid == 0 && chunk_idx == 0)
-        //    printf("write 1 start\n");
+
 
           ((INPUT_T*)&temp_write_word)[temp_word_count] = static_cast<INPUT_T>(out_ele);
           temp_word_count++;
-          if(temp_word_count == read_input_count){
-          //  writing_queue[col_idx][out_write_buffer_count] = temp_write_word;
-         
+          if(temp_word_count == read_input_count){         
             out_write_buffer[out_write_buffer_count] = temp_write_word;
             temp_word_count = 0;
             out_write_buffer_count++;
@@ -1219,10 +1187,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
               }
             }
             write_accept[col_idx] = false;
-
-            
-
-
             for(int i = 0; i < 32; i++)  {
               writing_queue[col_idx][i] = out_write_buffer[i];
             }
@@ -1230,6 +1194,7 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
             write_buffer_flag[col_idx] = true;
             out_write_buffer_count = 0;
             temp_word_count = 0;
+            temp_write_word = 0;
           }
 
           used_iterations += 1;
@@ -1335,7 +1300,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
     uint32_t used_iterations = 0;
     uint32_t total_iterations = in_chunk_size / 32 / sizeof(READ_T);
     int cur_idx = 0;
-    uint32_t row_bytes = 32 * sizeof(READ_T);
     uint32_t num_row = 32;
     uint32_t eles_in_chunks = in_chunk_size / sizeof(READ_T);
     uint32_t out_start_offset = eles_in_chunks * chunk_idx;
@@ -1442,7 +1406,6 @@ __host__ void compress_gpu( uint8_t * in, uint8_t **out,
   int COMP_WRITE_BYTES = sizeof(READ_T);
   uint8_t *d_in;
   int8_t *d_out;
-  uint8_t *temp;
 
 
   uint64_t padded_in_n_bytes =
@@ -1452,16 +1415,11 @@ __host__ void compress_gpu( uint8_t * in, uint8_t **out,
   assert((chunk_size % READ_UNITS) == 0);
   uint64_t exp_out_chunk_size = (chunk_size + OVERHEAD_PER_CHUNK_(chunk_size));
   uint64_t exp_data_out_bytes = (n_chunks * exp_out_chunk_size);
-  uint64_t len_bytes = (n_chunks * sizeof(uint64_t));
-  uint64_t head_bytes = HEAD_INTS * sizeof(uint32_t);
-  uint64_t out_bytes = head_bytes +        // header
-                       len_bytes +         // lens
-                       exp_data_out_bytes; // data
-
+ 
   printf("in bytes: %llu\n", in_n_bytes);
 
   uint64_t num_chunk = in_n_bytes / CHUNK_SIZE;
-  // printf("cpu num chunk: %llu\n", num_chunk);
+   printf("num chunk: %llu\n", num_chunk);
 
   // cpu
   uint8_t *cpu_data_out = (uint8_t *)malloc(exp_data_out_bytes);
@@ -1489,11 +1447,7 @@ __host__ void compress_gpu( uint8_t * in, uint8_t **out,
 
 
 
-  // rlev1_compress_func_init<INPUT_T, READ_T><<<n_chunks, dim3(BLK_SIZE,2,1)>>>(
-  //     d_in, chunk_size, n_chunks, d_col_len, d_col_map, d_blk_offset, COMP_WRITE_BYTES);
 
-
-  // cuda_err_chk(cudaDeviceSynchronize());
 
   rlev1_compress_multi_reading_init<INPUT_T, READ_T><<<n_chunks, dim3(BLK_SIZE,2,1)>>>(
       d_in, chunk_size, n_chunks, d_col_len, d_col_map, d_blk_offset, COMP_WRITE_BYTES);
@@ -1523,16 +1477,16 @@ __host__ void compress_gpu( uint8_t * in, uint8_t **out,
 
   *out = new uint8_t[final_out_size];
   
+  
   cuda_err_chk(cudaMalloc(&d_out, final_out_size));  
   cuda_err_chk(cudaDeviceSynchronize());
 
 
-  //rlev1_compress_func <INPUT_T, READ_T> <<< n_chunks, dim3(BLK_SIZE,2,1)>>> (d_in, d_out, chunk_size, n_chunks, d_col_len_sorted, d_col_map, d_blk_offset, COMP_WRITE_BYTES);
   rlev1_compress_multi_reading <INPUT_T, READ_T> <<<n_chunks, dim3(BLK_SIZE,2,1)>>> (d_in, d_out, chunk_size, n_chunks, d_col_len_sorted, d_col_map, d_blk_offset, COMP_WRITE_BYTES);
   cuda_err_chk(cudaDeviceSynchronize());
 
-  cuda_err_chk(
-      cudaMemcpy((*out), d_out, final_out_size, cudaMemcpyDeviceToHost));
+   cuda_err_chk(
+       cudaMemcpy((*out), d_out, final_out_size, cudaMemcpyDeviceToHost));
 
   std::ofstream col_len_file("./input_data/col_len.bin", std::ofstream::binary);
   col_len_file.write((const char *)(col_len), BLK_SIZE * num_chunk * 8);
