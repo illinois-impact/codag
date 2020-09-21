@@ -1045,7 +1045,7 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
     INPUT_T value = 0;
     uint64_t write_iterations = (CHUNK_SIZE / BLK_SIZE) / input_byte;
 
-    uint8_t delta = 0;
+    int8_t delta = 0;
     uint64_t out_start_idx = chunk_idx * CHUNK_SIZE / input_byte;
     uint8_t col_idx = col_map[BLK_SIZE * chunk_idx + tid];
 
