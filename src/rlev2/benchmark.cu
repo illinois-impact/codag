@@ -82,9 +82,9 @@ int main(int argc, char** argv) {
     close(in_fd);
 
     benchmark<1>(in, in_sb.st_size);
-    benchmark<2>(in, in_sb.st_size);
-    benchmark<4>(in, in_sb.st_size);
-    benchmark<8>(in, in_sb.st_size);
+//    benchmark<2>(in, in_sb.st_size);
+//    benchmark<4>(in, in_sb.st_size);
+//    benchmark<8>(in, in_sb.st_size);
 
     
     if(munmap(in, in_sb.st_size) == -1) PRINT_ERROR;
