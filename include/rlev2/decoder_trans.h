@@ -1,6 +1,6 @@
 #ifndef _RLEV2_DECODER_TRANPOSE_H_
 #define _RLEV2_DECODER_TRANPOSE_H_
-
+#include "cuda_profiler_api.h"
 #include "utils.h"
 
 #include "decompress_write_sync.h"
@@ -635,6 +635,7 @@ namespace rlev2 {
 	void decompress_gpu(const uint8_t *in, const uint64_t in_n_bytes, const uint64_t n_chunks,
 			blk_off_t *blk_off, col_len_t *col_len,
 			int64_t *&out, uint64_t &out_n_bytes) {
+
 		initialize_bit_maps();
 		uint8_t *d_in;
 		int64_t *d_out;
@@ -661,8 +662,9 @@ namespace rlev2 {
 		cuda_err_chk(cudaDeviceSynchronize());
 		std::chrono::high_resolution_clock::time_point kernel_end = std::chrono::high_resolution_clock::now();
 		std::chrono::duration<double> total = std::chrono::duration_cast<std::chrono::duration<double>>(kernel_end - kernel_start);		
-		std::cout << "kernel time: " << total.count() << " secs\n";
 
+		std::cout << "kernel time: " << total.count() << " secs\n";
+	
 		out = new int64_t[exp_out_n_bytes / sizeof(int64_t)];
 		cuda_err_chk(cudaMemcpy(out, d_out, exp_out_n_bytes, cudaMemcpyDeviceToHost));
 		

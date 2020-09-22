@@ -1,8 +1,8 @@
 #ifndef _RLEV2_DECODER_H_
 #define _RLEV2_DECODER_H_
-
+#include "cuda_profiler_api.h"
 #include <common.h>
-
+#include <iostream>
 #include "utils.h"
 
 #include <chrono>
@@ -227,7 +227,8 @@ namespace rlev2 {
     }
 
     __host__ void decompress_gpu(const uint8_t* in, const uint64_t in_n_bytes, int64_t*& out, uint64_t& out_n_bytes) {
-        initialize_bit_maps();
+	cudaProfilerStart();    
+	    initialize_bit_maps();
         
         uint8_t *d_in;
         int64_t *d_out;
@@ -264,6 +265,9 @@ namespace rlev2 {
         cuda_err_chk(cudaFree(d_ptr));
 
         out_n_bytes = raw_data_bytes;
+
+	cudaProfilerStop();
+	cudaDeviceReset();
     }
 
 }
