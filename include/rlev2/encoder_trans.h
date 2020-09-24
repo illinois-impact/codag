@@ -212,9 +212,6 @@ namespace rlev2 {
                 in_start += BLK_SIZE * read_unit;
                 curr_read_offset = 0;
             }
-// #ifdef DEBUG
-// if (tid == ERR_THREAD) printf("thread %u read %ld\n", tid, val);
-// #endif
             if (num_literals == 0) {
                 literals[num_literals ++] = val;
                 fix_runlen = 1;
@@ -311,18 +308,6 @@ namespace rlev2 {
                 }
             }
         }
-// #ifdef DEBUG
-// if (tid == ERR_THREAD) {
-//     for (int i=0; i<info.potision; i+=4) {
-//         printf("thread %d write bytes %x%x%x%x\n", tid, 
-//         info.output[i], 
-//         info.output[i + 1], 
-//         info.output[i + 2], 
-//         info.output[i + 3]);
-//     }
-// }
-// #endif
-
     }
 
     template<bool should_write, int READ_UNIT>
@@ -376,9 +361,6 @@ if (!should_write) {
                 in_start += BLK_SIZE * READ_UNIT;
                 curr_read_offset = 0;
             }
-// #ifdef DEBUG
-// if (should_write && cid == ERR_CHUNK && tid == ERR_THREAD) printf("thread %u read %lld\n", tid, val);
-// #endif
             if (num_literals == 0) {
                 literals[num_literals ++] = val;
                 fix_runlen = 1;
@@ -489,20 +471,6 @@ if (!should_write) {
 
     }
 }
-#ifdef DEBUG
-if (should_write && cid == ERR_CHUNK && tid == ERR_THREAD) {
-    for (int i=0; i<info.potision; i+=4) {
-        printf("thread %d write bytes %x%x%x%x\n", tid, 
-        info.output[i], 
-        info.output[i + 1], 
-        info.output[i + 2], 
-        info.output[i + 3]);
-    }
-    printf("thread %d write out %d bytes\n", tid, info.potision);
-}
-
-#endif
-
     }
 
     __global__

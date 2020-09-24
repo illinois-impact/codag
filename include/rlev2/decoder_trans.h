@@ -60,9 +60,6 @@ namespace rlev2 {
         int curr_write_offset = 0;
 
 		auto read_byte = [&]() {
-// #ifdef DEBUG
-// if (cid == ERR_CHUNK && tid == ERR_THREAD) printf("thread %d read byte %x\n", tid, input_buffer[input_buffer_head]);
-// #endif
 			auto ret = input_buffer[input_buffer_head];
 			input_buffer_count -= 1;
 			used_bytes += 1;
@@ -71,10 +68,6 @@ namespace rlev2 {
 		};
 
 		auto write_int = [&](int64_t i) {
-//  #ifdef DEBUG
-//  if (cid == ERR_CHUNK && tid == ERR_THREAD) printf("thread %d write int %lld at idx %lld\n", tid, i, (out_8B + curr_write_offset - out));
-//  #endif
-
 			*(out_8B + curr_write_offset) = i; 
             curr_write_offset ++;
             if (curr_write_offset == READ_UNIT) {
@@ -96,17 +89,6 @@ namespace rlev2 {
 				out_int |= (VARINT_MASK & b) << offset;
 				offset += 7;
 			} while (b >= 0x80);
-			// while (true) {
-			// 	b = read_byte();
-			// 	if (b < 0x80) {
-			// 		out_int |= (VARINT_MASK & b) << offset;
-			// 		offset += 7;
-			// 		break;
-			// 	}
-			// 	out_int |= (VARINT_MASK & b) << offset;
-			// 	offset += 7;
-			// }
-
 			return out_int;
 		};
 
@@ -120,11 +102,6 @@ namespace rlev2 {
         while (used_bytes < mychunk_size) {
 			
             auto mask = __activemask();
-// #ifdef DEBUG
-// if (cid == ERR_CHUNK && tid ==	ERR_THREAD) {
-// 	printf("thread %d with active mask %u\n", tid, mask);
-// }
-// #endif
 	        bool read;
 			#pragma unroll
 			for (int read_iter=0; read_iter<2; ++read_iter) {
@@ -133,13 +110,6 @@ namespace rlev2 {
 				uint32_t read_sync = __ballot_sync(mask, read);
 				if (read) {
 					*(uint32_t *)(&(input_buffer[input_buffer_tail])) = in_4B[in_4B_off + __popc(read_sync & t_read_mask)];  
-// #ifdef DEBUG
-// if (cid == ERR_CHUNK && tid == ERR_THREAD) printf("thread %d read bytes %x%x%x%x from base offset %u\n", tid,
-// input_buffer[input_buffer_tail],
-// input_buffer[input_buffer_tail + 1],
-// input_buffer[input_buffer_tail + 2],
-// input_buffer[input_buffer_tail + 3], in_4B_off);
-// #endif
 					input_buffer_tail = (input_buffer_tail + 4) % DECODE_BUFFER_COUNT;
 					input_buffer_count += 4;
 					in_4B_off += __popc(read_sync); 
@@ -153,25 +123,6 @@ namespace rlev2 {
 				curr_schm = first_byte & HEADER_MASK;
 				curr_fbw = get_decoded_bit_width((first_byte >> 1) & 0x1f);
 				curr_fbw_left = curr_fbw;
-
-#ifdef DEBUG
-if (cid == ERR_CHUNK && tid == ERR_THREAD) {
-switch(curr_schm) {
-	case HEADER_SHORT_REPEAT: {
-		printf("===== case short repeat\n");
-	} break;
-	case HEADER_DIRECT: {
-		printf("===== case direct\n");
-	} break;
-	case HEADER_DELTA: {
-		printf("===== case DELTA\n");
-	} break;
-	case HEADER_PACTED_BASE: {
-		printf("===== case patched base\n");
-	} break;
-}
-}
-#endif
 
 				if (curr_schm != HEADER_SHORT_REPEAT) {
 					curr_len = (((first_byte & 0x01) << 8) | read_byte()) + 1;
