@@ -474,12 +474,16 @@ namespace rlev2 {
         if (!info.is_fixed_delta) {
             write_aligned_ints(info.deltas + 1, info.num_literals - 2, num_bits, info);
         }
+
+        for (int i=0; i<MAX_LITERAL_SIZE; ++i) {
+            info.deltas[i] = 0;
+        }
         info.num_literals = 0;
     }
     
     __host__ __device__ 
     void writePatchedBasedValues(encode_info<>& info, patch_blob& pb) {
-        // printf("write patched base\n");
+        printf("write patched base\n");
 
         uint32_t& varlen = info.var_runlen;
         varlen -= 1;

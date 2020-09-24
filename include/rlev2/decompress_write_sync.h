@@ -3,8 +3,6 @@
 
 #include "utils.h"
 
-#define DEBUG
-
 // constexpr int DECODE_BUFFER_COUNT = 256;
 // constexpr int SHM_BUFFER_COUNT = DECODE_BUFFER_COUNT * BLK_SIZE;
 //constexpr int DECODE_BUFFER_COUNT = 256;

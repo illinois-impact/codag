@@ -377,7 +377,7 @@ if (!should_write) {
                 curr_read_offset = 0;
             }
 // #ifdef DEBUG
-// if (cid == ERR_CHUNK && tid == ERR_THREAD) printf("thread %u read %lld\n", tid, val);
+// if (should_write && cid == ERR_CHUNK && tid == ERR_THREAD) printf("thread %u read %lld\n", tid, val);
 // #endif
             if (num_literals == 0) {
                 literals[num_literals ++] = val;
@@ -489,17 +489,19 @@ if (!should_write) {
 
     }
 }
-// #ifdef DEBUG
-// if (cid == ERR_CHUNK && tid == ERR_THREAD) {
-//     for (int i=0; i<info.potision; i+=4) {
-//         printf("thread %d write bytes %x%x%x%x\n", tid, 
-//         info.output[i], 
-//         info.output[i + 1], 
-//         info.output[i + 2], 
-//         info.output[i + 3]);
-//     }
-// }
-// #endif
+#ifdef DEBUG
+if (should_write && cid == ERR_CHUNK && tid == ERR_THREAD) {
+    for (int i=0; i<info.potision; i+=4) {
+        printf("thread %d write bytes %x%x%x%x\n", tid, 
+        info.output[i], 
+        info.output[i + 1], 
+        info.output[i + 2], 
+        info.output[i + 3]);
+    }
+    printf("thread %d write out %d bytes\n", tid, info.potision);
+}
+
+#endif
 
     }
 
@@ -575,8 +577,8 @@ if (!should_write) {
             }
 
 // #ifdef DEBUG
-// if (cid == 0 && tid == ERR_THREAD) {
-//     printf("thread %d out4b at %ld with %x%x%x%x\n", tid, 
+// if (cid == ERR_CHUNK && tid == ERR_THREAD) {
+//     printf("chunk %d thread %d out4b at %ld with %x%x%x%x\n", cid, tid, 
 //     out_offset + left_active * DECODE_UNIT,
 //     out[out_offset + left_active * DECODE_UNIT ],
 //     out[out_offset + left_active * DECODE_UNIT + 1],
@@ -594,7 +596,7 @@ if (!should_write) {
     __host__
     void compress_gpu_transpose(const int64_t* const in, const uint64_t in_n_bytes, uint8_t*& out, uint64_t& out_n_bytes,
                     uint64_t& out_n_chunks, blk_off_t *&blk_off, col_len_t *&col_len) {
-        printf("======> compressing\n");
+        printf("Calling compress kernel.\n");
         uint32_t n_chunks = (in_n_bytes - 1) / CHUNK_SIZE + 1;
         out_n_chunks = n_chunks;
         
