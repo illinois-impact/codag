@@ -29,8 +29,11 @@ namespace rlev2 {
 
 		// uint8_t input_buffer[DECODE_BUFFER_COUNT];
 
-		__shared__ uint8_t shm_buffer[SHM_BUFFER_COUNT];
-		uint8_t *input_buffer = &shm_buffer[DECODE_BUFFER_COUNT * tid];
+		// __shared__ uint8_t shm_buffer[SHM_BUFFER_COUNT];
+		// uint8_t *input_buffer = &shm_buffer[DECODE_BUFFER_COUNT * tid];
+
+		uint8_t shm_buffer[DECODE_BUFFER_COUNT];
+		uint8_t *input_buffer = &shm_buffer[0];
 
 		uint8_t curr_schm = 0;
 

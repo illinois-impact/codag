@@ -6,7 +6,7 @@
 
 // #define DEBUG
 
-constexpr int READ_GRANULARITY = 16;
+constexpr int READ_GRANULARITY = 1;
 constexpr int DECODE_UNIT = 4; 
 constexpr uint64_t VARINT_MASK = 0x7f;
 
