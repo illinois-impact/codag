@@ -1003,10 +1003,7 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
       READ_T temp_store = *inTyped;
       in_read_off += res * ele_size;
 
-      // if(tid == 0 && chunk_idx == 0){
-      //   printf("read data: %x\n", temp_store);
-      // }
-
+ 
       r_decomp_read:
           const auto cur_tail = in_tail[tid].load(simt::memory_order_relaxed);
           const auto next_tail = (cur_tail  + 1) % READING_WARP_SIZE;
@@ -1014,12 +1011,12 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
           if (next_tail != in_head[tid].load(simt::memory_order_acquire)) {
             input_buffer[cur_tail][tid] = temp_store;
             in_tail[tid].store(next_tail, simt::memory_order_release);
-            used_bytes += sizeof(READ_T);
           }
           else {
             __nanosleep(100);
             goto r_decomp_read;
           }
+      used_bytes += sizeof(READ_T);
       __syncwarp(mask);
     }
 
@@ -1371,13 +1368,9 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
 
     
        __syncwarp();
-      //out[out_start_offset + write_off[reading_index] * num_row * 32 + 32 * reading_index + tid] = read_data;
-      if(write_off[reading_index] > 10000){
-
-      }
-      else{
+      
         out[out_start_offset + + write_off[reading_index] * num_row * 32 + 32 * reading_index + tid] = read_data;
-      }
+      
       __syncwarp();
       if(tid == 0) {
           write_off[reading_index] = write_off[reading_index] + 1;
