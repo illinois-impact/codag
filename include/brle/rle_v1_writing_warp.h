@@ -956,11 +956,15 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
   __shared__ simt::atomic<uint8_t,  simt::thread_scope_block> in_tail[32];
   __shared__ READ_T input_buffer[READING_WARP_SIZE][32];
 
+  __shared__ simt::atomic<uint8_t,  simt::thread_scope_block> out_head[32];
+  __shared__ simt::atomic<uint8_t,  simt::thread_scope_block> out_tail[32];
+  __shared__ READ_T output_buffer[32][64];
+
+
+
+
  volatile  __shared__ READ_T writing_queue [32][32];
-  volatile __shared__ bool write_request[32];
- volatile  __shared__ bool write_accept[32];
- volatile  __shared__ bool write_buffer_flag[32];
- volatile  __shared__ uint8_t write_off[32];
+
 
   int tid = threadIdx.x;
   int chunk_idx = blockIdx.x;
@@ -971,12 +975,10 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
   if(which == 0){
     in_head[tid] = 0;
     in_tail[tid] = 0;
-    
-    write_request[tid] = false;
-    write_accept[tid] = false;
 
-    write_buffer_flag[tid] = false;
-    write_off[tid] = 0;
+    out_head[tid] = 0;
+    out_tail[tid] = 0;
+    
   }
 
 
@@ -1171,31 +1173,26 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
 
           ((INPUT_T*)&temp_write_word)[temp_word_count] = static_cast<INPUT_T>(out_ele);
           temp_word_count++;
-          if(temp_word_count == read_input_count){         
-            out_write_buffer[out_write_buffer_count] = temp_write_word;
-            temp_word_count = 0;
-            out_write_buffer_count++;
-          }
 
-          if(out_write_buffer_count == 32){
-            write_request[col_idx] = true;
+           if(temp_word_count == read_input_count){
 
-        
-            while(1){
-              if(write_accept[col_idx] == true){
-                break;
-              }
+              decomp_write1:
+                const auto cur_tail = out_tail[col_idx].load(simt::memory_order_relaxed);
+                const auto next_tail = (cur_tail  + 1) % 64;
+
+                if (next_tail != out_head[col_idx].load(simt::memory_order_acquire)) {
+                 output_buffer[col_idx][cur_tail] = temp_write_word;              
+                 out_tail[col_idx].store(next_tail, simt::memory_order_release);
+                }
+
+                else {
+                  __nanosleep(100);
+                  goto decomp_write1;
+                }
+
+              temp_word_count = 0;
+              temp_write_word = 0;
             }
-            write_accept[col_idx] = false;
-            for(int i = 0; i < 32; i++)  {
-              writing_queue[col_idx][i] = out_write_buffer[i];
-            }
-
-            write_buffer_flag[col_idx] = true;
-            out_write_buffer_count = 0;
-            temp_word_count = 0;
-            temp_write_word = 0;
-          }
 
           used_iterations += 1;
         }
@@ -1251,32 +1248,43 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
           
         
           if(temp_word_count == read_input_count){
-          //  writing_queue[col_idx][out_write_buffer_count] = temp_write_word;
 
-            out_write_buffer[out_write_buffer_count] = temp_write_word;
+            decomp_write2:
+              const auto cur_tail = out_tail[col_idx].load(simt::memory_order_relaxed);
+              const auto next_tail = (cur_tail  + 1) % 64;
+
+              if (next_tail != out_head[col_idx].load(simt::memory_order_acquire)) {
+               output_buffer[col_idx][cur_tail] = temp_write_word;              
+               out_tail[col_idx].store(next_tail, simt::memory_order_release);
+              }
+
+              else {
+                __nanosleep(100);
+                goto decomp_write2;
+              }
+
             temp_word_count = 0;
-            out_write_buffer_count++;
             temp_write_word = 0;
           }
 
-          if(out_write_buffer_count == 32){
+          // if(out_write_buffer_count == 32){
 
-            write_request[col_idx] = true;
+          //   write_request[col_idx] = true;
      
-            while(1){
-              if(write_accept[col_idx] == true){
-                break;
-              }
-            }
-            write_accept[col_idx] = false;
-            for(int i = 0; i < 32; i++)  {
-              writing_queue[col_idx][i] = out_write_buffer[i];
-            }
+          //   while(1){
+          //     if(write_accept[col_idx] == true){
+          //       break;
+          //     }
+          //   }
+          //   write_accept[col_idx] = false;
+          //   for(int i = 0; i < 32; i++)  {
+          //     writing_queue[col_idx][i] = out_write_buffer[i];
+          //   }
 
-            write_buffer_flag[col_idx] = true;
-            out_write_buffer_count = 0;
-            temp_word_count = 0;
-          }
+          //   write_buffer_flag[col_idx] = true;
+          //   out_write_buffer_count = 0;
+          //   temp_word_count = 0;
+          // }
 
       
             used_iterations += 1;
@@ -1296,6 +1304,9 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
   //writing warp
   else if(which == 2){
     __shared__ uint8_t reading_index;
+    __shared__ uint8_t reading_head;
+    __shared__ uint32_t write_off[32];
+
 
     uint32_t used_iterations = 0;
     uint32_t total_iterations = in_chunk_size / 32 / sizeof(READ_T);
@@ -1304,28 +1315,48 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
     uint32_t eles_in_chunks = in_chunk_size / sizeof(READ_T);
     uint32_t out_start_offset = eles_in_chunks * chunk_idx;
 
+
+    write_off[tid] = 0;
+
+    uint8_t next_head = 0;
+
+    __syncwarp();
+
+
     while(used_iterations < total_iterations) {
        
       if(tid == 0){
         while(1){
-          for(int i = 0; i < 32; i++){
-            //read request
-            if(write_request[cur_idx]){
-              reading_index = cur_idx;
-              write_request[cur_idx] = false;
-              write_accept[cur_idx] = true;
-              while(1){
-                if(write_buffer_flag[cur_idx] == true){
-                  write_buffer_flag[cur_idx] = false;
-                  break;
-                }
-              }
+          
+          const auto cur_head = out_head[cur_idx].load(simt::memory_order_relaxed);
+          const auto cur_tail = out_tail[cur_idx].load(simt::memory_order_acquire);
 
+
+          uint16_t count_num = 0;
+          if(cur_tail > cur_head){
+            if(cur_tail - cur_head >= 32){
+              next_head = (cur_head + 32) % 64;
+              reading_index = cur_idx;
+              reading_head = cur_head;
               cur_idx = (cur_idx + 1) % 32;
               goto read_write_done;
             }
-            cur_idx = (cur_idx + 1) % 32;
           }
+
+          else if (cur_tail < cur_head){
+            if((64 - 1 - (cur_head - cur_tail - 1)) >= 32) {
+              next_head = (cur_head + 32) % 64;
+              reading_index = cur_idx;
+              reading_head = cur_head;
+              cur_idx = (cur_idx + 1) % 32;
+              goto read_write_done;
+
+              goto read_write_done;
+            }
+          }
+
+            cur_idx = (cur_idx + 1) % 32;
+          
         }
       }
       //label to break the while loop
@@ -1335,14 +1366,22 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
        //sync threads to read the data
       __syncwarp();
       //get data from reading queue
-      READ_T read_data = writing_queue[reading_index][tid];
+      uint8_t my_head = (reading_head + tid) % 64;
+      READ_T read_data = output_buffer[reading_index][my_head];
 
     
        __syncwarp();
-      out[out_start_offset + write_off[reading_index] * num_row * 32 + 32 * reading_index + tid] = read_data;
+      //out[out_start_offset + write_off[reading_index] * num_row * 32 + 32 * reading_index + tid] = read_data;
+      if(write_off[reading_index] > 10000){
+
+      }
+      else{
+        out[out_start_offset + + write_off[reading_index] * num_row * 32 + 32 * reading_index + tid] = read_data;
+      }
       __syncwarp();
       if(tid == 0) {
-          write_off[reading_index]++;
+          write_off[reading_index] = write_off[reading_index] + 1;
+          out_head[reading_index].store(next_head, simt::memory_order_release);
       }
       used_iterations++;
 
