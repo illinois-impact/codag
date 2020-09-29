@@ -3,8 +3,9 @@
 #include "cuda_profiler_api.h"
 #include "utils.h"
 
-#include "decompress_write_sync.h"
+#include <cuda/atomic>
 
+#include "decompress_write_sync.h"
 // constexpr int DECODE_BUFFER_COUNT = 256;
 // constexpr int SHM_BUFFER_COUNT = DECODE_BUFFER_COUNT * BLK_SIZE;
 //constexpr int DECODE_BUFFER_COUNT = 256;
@@ -309,6 +310,302 @@ namespace rlev2 {
 
     }
 
+	template <int READ_UNIT>
+	__global__ void decompress_func_read_sync(const uint8_t* __restrict__ in, const uint64_t n_chunks, const blk_off_t* __restrict__ blk_off, const col_len_t* __restrict__ col_len, int64_t* __restrict__ out) {
+		__shared__ cuda::atomic<uint32_t, cuda::thread_scope_block> in_[BLK_SIZE][DECODE_BUFFER_COUNT / 4];
+		__shared__ cuda::atomic<uint16_t, cuda::thread_scope_block> in_cnt_[BLK_SIZE];
+
+		int tid = threadIdx.x;
+		int cid = blockIdx.x;
+		int which = threadIdx.y;
+
+		uint32_t used_bytes = 0;
+		uint32_t mychunk_size = col_len[cid * BLK_SIZE + tid];
+
+		if (which == 0) {
+			in_cnt_[tid] = 0;
+		}
+		__syncthreads();
+
+		if (which == 0) { // reading warp
+			uint64_t in_start_idx = blk_off[cid];
+			uint32_t* in_4B = (uint32_t *)(&(in[in_start_idx]));
+			uint32_t in_4B_off = 0;	
+
+			uint8_t in_tail_ = 0;
+
+			const uint32_t t_read_mask = (0xffffffff >> (32 - tid));
+			while (true) {
+				bool read = used_bytes < mychunk_size;
+				unsigned read_sync = __ballot_sync(0xffffffff, read);
+
+// #ifdef DEBUG
+// printf("thread %d with read sync %u\n", tid, read_sync);
+// #endif	
+
+				if (read) {
+					while (in_cnt_[tid].load(cuda::memory_order_acquire) + 4 >= DECODE_BUFFER_COUNT) {
+						__nanosleep(100);
+					}
+					in_[tid][in_tail_].store(in_4B[in_4B_off + __popc(read_sync & t_read_mask)]);  
+// #ifdef DEBUG
+// if (tid == ERR_THREAD) {
+// 	printf("thread %d read from input %u\n", tid, in_4B[in_4B_off + __popc(read_sync & t_read_mask)]);
+// }
+// #endif	
+					in_4B_off += __popc(read_sync);
+
+					in_cnt_[tid] += 4;
+					in_tail_ = (in_tail_ + 1) % DECODE_BUFFER_COUNT;
+
+					used_bytes += 4;
+				} else {
+					break;
+				}
+				__syncwarp(read_sync);
+			}
+		} else if (which == 1) { // compute warp
+
+			uint64_t out_start_idx = cid * CHUNK_SIZE / sizeof(int64_t);
+			int64_t* out_8B = out + (out_start_idx + tid * READ_UNIT); 
+			
+			uint8_t curr_schm = 0;
+			uint8_t curr_fbw = 0, curr_fbw_left = 0;
+			uint8_t first_byte;
+
+			int curr_len = 0;
+			int64_t curr_64;
+			uint8_t bits_left = 0;
+			uint8_t bits_left_over;
+
+			bool dal_read_base = false;
+			int64_t base_val, base_delta, *base_out; // for delta encoding
+			int bw, pw, pgw, pll, patch_gap, curr_pwb_left; // for patched base encoding
+			int curr_write_offset = 0; 
+
+			uint8_t in_head_ = 0;
+
+			auto read_byte = [&]() {
+				while (in_cnt_[tid].load(cuda::memory_order_acquire) == 0) {
+// #ifdef DEBUG
+// 	printf("thread %d loop in which 1\n", tid);
+// #endif 
+					__nanosleep(100);
+				}
+				auto curr32 = in_[tid][in_head_ / 4].load();
+				auto ret = ((uint8_t*)&curr32)[in_head_%4];
+// #ifdef DEBUG
+// if (tid == ERR_THREAD) printf("read[%u]: %x\n", curr_head, ((uint8_t*)&curr32)[curr_head%4]);
+// #endif
+				in_head_ = (in_head_ + 1) % DECODE_BUFFER_COUNT;
+				in_cnt_[tid] -= 1;
+				
+				used_bytes += 1;
+
+				return ret;
+			};
+
+			auto write_int = [&](int64_t i) {
+				*(out_8B + curr_write_offset) = i; 
+				curr_write_offset ++;
+				if (curr_write_offset == READ_UNIT) {
+					curr_write_offset = 0;
+					out_8B += BLK_SIZE * READ_UNIT;
+				}
+				curr_len --;
+				curr_64 = 0;
+				curr_fbw_left = curr_fbw;
+			};
+
+			auto read_uvarint = [&]() {
+				uint64_t out_int = 0;
+				int offset = 0;
+				uint8_t b = 0;
+				do {
+					b = read_byte();
+					out_int |= (VARINT_MASK & b) << offset;
+					offset += 7;
+				} while (b >= 0x80);
+				return out_int;
+			};
+
+			auto read_svarint = [&]() {
+				auto ret = static_cast<int64_t>(read_uvarint());
+				return ret >> 1 ^ -(ret & 1);
+			};
+			
+			while (used_bytes < mychunk_size) {
+				if (curr_schm == 0) {
+					first_byte = read_byte();
+					curr_schm = first_byte & HEADER_MASK;
+					curr_fbw = get_decoded_bit_width((first_byte >> 1) & 0x1f);
+					curr_fbw_left = curr_fbw;
+
+					if (curr_schm != HEADER_SHORT_REPEAT) {
+						curr_len = (((first_byte & 0x01) << 8) | read_byte()) + 1;
+						bits_left = 0; bits_left_over = 0; curr_64 = 0;
+
+						dal_read_base = false;
+						
+						if (curr_schm == HEADER_PACTED_BASE) {
+							auto third = read_byte();
+							auto forth = read_byte();
+
+							bw = ((third >> 5) & 0x07) + 1;
+							pw = get_decoded_bit_width(third & 0x1f);
+							pgw = ((forth >> 5) & 0x07) + 1;
+							pll = forth & 0x1f;
+							patch_gap = 0;
+
+							curr_pwb_left = get_closest_bit(pw + pgw);
+						}
+					}
+				}
+
+				switch(curr_schm) {
+				case HEADER_SHORT_REPEAT: {
+					auto num_bytes = ((first_byte >> 3) & 0x07) + 1;
+					int64_t tmp_int = 0;
+					while (num_bytes-- > 0) {
+						tmp_int |= ((int64_t)read_byte() << (num_bytes * 8));
+					}
+					auto cnt = (first_byte & 0x07) + MINIMUM_REPEAT;
+					while (cnt-- > 0) {
+						write_int(tmp_int);
+					}
+					curr_schm = 0;
+				}	break;
+				case HEADER_DIRECT: {
+					while (curr_len > 0) {
+						while (curr_fbw_left > bits_left) {
+							curr_64 <<= bits_left;
+							curr_64 |= bits_left_over & ((1 << bits_left) - 1);
+							curr_fbw_left -= bits_left;
+							bits_left_over = read_byte();
+							bits_left = 8;
+						}
+
+						if (curr_fbw_left <= bits_left) {
+							if (curr_fbw_left > 0) {
+								curr_64 <<= curr_fbw_left;
+								bits_left -= curr_fbw_left;
+								curr_64 |= (bits_left_over >> bits_left) & ((1 << curr_fbw_left) - 1);
+							}
+
+							write_int(curr_64);
+						} 
+					}
+					
+					curr_schm = 0;
+				}	break;
+				case HEADER_DELTA: {
+					if (!dal_read_base) {
+						dal_read_base = true;
+
+						base_val = read_uvarint();
+						base_delta = read_svarint();
+						write_int(base_val);
+						base_val += base_delta;
+						write_int(base_val);
+					}
+
+					if (((first_byte >> 1) & 0x1f) != 0) {
+						// var delta
+						while (curr_len > 0) {
+							while (curr_fbw_left > bits_left) {
+								curr_64 <<= bits_left;
+								curr_64 |= bits_left_over & ((1 << bits_left) - 1);
+								curr_fbw_left -= bits_left;
+								bits_left_over = read_byte();
+								bits_left = 8;
+							}
+
+							if (curr_fbw_left <= bits_left) {
+								if (curr_fbw_left > 0) {
+									curr_64 <<= curr_fbw_left;
+									bits_left -= curr_fbw_left;
+									curr_64 |= (bits_left_over >> bits_left) & ((1 << curr_fbw_left) - 1);
+								}
+								base_val += curr_64; //TODO: THIS IS NOT ALWAYS +.
+								write_int(base_val);
+							} 
+						}
+					} else {
+						// fixed delta encoding
+						while (curr_len > 0) {
+							base_val += base_delta;
+							write_int(base_val);
+						}
+					}
+					curr_schm = 0;
+				}	break;
+				case HEADER_PACTED_BASE: {
+					if (!dal_read_base) {
+						dal_read_base = true;
+
+						base_val = 0;
+						auto fbw = bw;
+						while (fbw-- > 0) {
+							base_val |= (read_byte() << (fbw * 8));
+						}
+						base_out = out_8B;
+					} 
+
+					while (curr_len > 0) {
+						while (curr_fbw_left > bits_left) {
+							curr_64 <<= bits_left;
+							curr_64 |= bits_left_over & ((1 << bits_left) - 1);
+							curr_fbw_left -= bits_left;
+							bits_left_over = read_byte();
+							bits_left = 8;
+						}
+
+						if (curr_fbw_left <= bits_left) {
+							if (curr_fbw_left > 0) {
+								curr_64 <<= curr_fbw_left;
+								bits_left -= curr_fbw_left;
+								curr_64 |= (bits_left_over >> bits_left) & ((1 << curr_fbw_left) - 1);
+							}
+							curr_64 += base_val;
+							write_int(curr_64);
+						} 
+					}
+
+					auto patch_mask = (static_cast<uint16_t>(1) << pw) - 1;
+					while (pll > 0) {
+						while (curr_pwb_left > bits_left) {
+							curr_64 <<= bits_left;
+							curr_64 |= bits_left_over & ((1 << bits_left) - 1);
+							curr_pwb_left -= bits_left;
+							bits_left_over = read_byte();
+							bits_left = 8;
+						}
+
+						if (curr_pwb_left <= bits_left) {
+							if (curr_pwb_left > 0) {
+								curr_64 <<= curr_pwb_left;
+								bits_left -= curr_pwb_left;
+								curr_64 |= (bits_left_over >> bits_left) & ((1 << curr_pwb_left) - 1);
+							}
+
+							patch_gap += curr_64 >> pw;
+							base_out[(patch_gap / READ_UNIT) * BLK_SIZE + (patch_gap % READ_UNIT)] |= static_cast<int64_t>(curr_64 & patch_mask) << curr_fbw;
+
+							pll --;
+							curr_64 = 0;
+							curr_pwb_left = get_closest_bit(pw + pgw);
+						} 
+					}
+					curr_schm = 0; 
+				}	break;
+				default: {
+					curr_schm = 0;
+				} break;
+				}
+			}
+		}
+    }
+
 	template<int READ_UNIT>
 	__host__
 	void decompress_gpu(const uint8_t *in, const uint64_t in_n_bytes, const uint64_t n_chunks,
@@ -338,7 +635,7 @@ namespace rlev2 {
 
 		std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
 		// decompress_func_write_sync<<<n_chunks, dim3(BLK_SIZE, 2, 1)>>>(d_in, n_chunks, d_blk_off, d_col_len, d_out);
-		decompress_func_template<READ_UNIT><<<n_chunks, BLK_SIZE>>>(d_in, n_chunks, d_blk_off, d_col_len, d_out);
+		decompress_func_read_sync<READ_UNIT><<<n_chunks, dim3(BLK_SIZE, 2, 1)>>>(d_in, n_chunks, d_blk_off, d_col_len, d_out);
 		cuda_err_chk(cudaDeviceSynchronize());
 		std::chrono::high_resolution_clock::time_point kernel_end = std::chrono::high_resolution_clock::now();
 		std::chrono::duration<double> total = std::chrono::duration_cast<std::chrono::duration<double>>(kernel_end - kernel_start);		
