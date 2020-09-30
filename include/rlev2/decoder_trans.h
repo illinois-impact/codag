@@ -309,11 +309,19 @@ namespace rlev2 {
 		
 
     }
+using clock_value_t = long long;
+__device__ void clock_sleep(clock_value_t sleep_cycles)
+{
+    clock_value_t start = clock64();
+    clock_value_t cycles_elapsed;
+    do { cycles_elapsed = clock64() - start; } 
+    while (cycles_elapsed < sleep_cycles);
+}
 
 	template <int READ_UNIT>
 	__global__ void decompress_func_read_sync(const uint8_t* __restrict__ in, const uint64_t n_chunks, const blk_off_t* __restrict__ blk_off, const col_len_t* __restrict__ col_len, int64_t* __restrict__ out) {
 		__shared__ cuda::atomic<uint32_t, cuda::thread_scope_block> in_[BLK_SIZE][DECODE_BUFFER_COUNT / 4];
-		__shared__ cuda::atomic<uint16_t, cuda::thread_scope_block> in_cnt_[BLK_SIZE];
+		__shared__ cuda::atomic<int16_t, cuda::thread_scope_block> in_cnt_[BLK_SIZE];
 
 		int tid = threadIdx.x;
 		int cid = blockIdx.x;
@@ -325,6 +333,7 @@ namespace rlev2 {
 		if (which == 0) {
 			in_cnt_[tid] = 0;
 		}
+
 		__syncthreads();
 
 		if (which == 0) { // reading warp
@@ -334,6 +343,7 @@ namespace rlev2 {
 
 			uint8_t in_tail_ = 0;
 
+// if (tid == ERR_THREAD) printf("thrad %d with chunksize %u\n", tid, mychunk_size);
 			const uint32_t t_read_mask = (0xffffffff >> (32 - tid));
 			while (true) {
 				bool read = used_bytes < mychunk_size;
@@ -344,10 +354,16 @@ namespace rlev2 {
 // #endif	
 
 				if (read) {
-					while (in_cnt_[tid].load(cuda::memory_order_acquire) + 4 >= DECODE_BUFFER_COUNT) {
+				r1:
+					auto curr_cnt = in_cnt_[tid].load(cuda::memory_order_acquire);
+	// if (tid == ERR_THREAD) 				printf("thread %d loop in which 0 with count %d\n", tid, curr_cnt);
+
+					if (curr_cnt + 4 > DECODE_BUFFER_COUNT) {
 						__nanosleep(100);
+						goto r1;
 					}
-					in_[tid][in_tail_].store(in_4B[in_4B_off + __popc(read_sync & t_read_mask)]);  
+
+					in_[tid][in_tail_].store(in_4B[in_4B_off + __popc(read_sync & t_read_mask)], cuda::memory_order_release);  
 // #ifdef DEBUG
 // if (tid == ERR_THREAD) {
 // 	printf("thread %d read from input %u\n", tid, in_4B[in_4B_off + __popc(read_sync & t_read_mask)]);
@@ -355,13 +371,17 @@ namespace rlev2 {
 // #endif	
 					in_4B_off += __popc(read_sync);
 
-					in_cnt_[tid] += 4;
-					in_tail_ = (in_tail_ + 1) % DECODE_BUFFER_COUNT;
+					in_cnt_[tid].fetch_add(4, cuda::memory_order_release);
+
+// if (tid == ERR_THREAD)	printf("================================thread %d read 4 from input \n", tid);
+
+					in_tail_ = (in_tail_ + 1) % (DECODE_BUFFER_COUNT / 4);
 
 					used_bytes += 4;
 				} else {
 					break;
 				}
+// printf("thread %d waiting with mask %u with READ count %u\n", tid, read_sync, used_bytes);
 				__syncwarp(read_sync);
 			}
 		} else if (which == 1) { // compute warp
@@ -386,19 +406,22 @@ namespace rlev2 {
 			uint8_t in_head_ = 0;
 
 			auto read_byte = [&]() {
-				while (in_cnt_[tid].load(cuda::memory_order_acquire) == 0) {
-// #ifdef DEBUG
-// 	printf("thread %d loop in which 1\n", tid);
-// #endif 
+			r2:
+				auto curr_cnt = in_cnt_[tid].load(cuda::memory_order_acquire);
+// if (tid == ERR_THREAD) printf("thread %d loop in which 1 %u(%u) with cnt %d\n", tid, used_bytes, mychunk_size, curr_cnt);
+				if (curr_cnt <= 0) {
 					__nanosleep(100);
+					goto r2;
 				}
-				auto curr32 = in_[tid][in_head_ / 4].load();
+// #ifdef DEBUG
+// #endif 
+				auto curr32 = in_[tid][in_head_ / 4].load(cuda::memory_order_relaxed);
 				auto ret = ((uint8_t*)&curr32)[in_head_%4];
 // #ifdef DEBUG
 // if (tid == ERR_THREAD) printf("read[%u]: %x\n", curr_head, ((uint8_t*)&curr32)[curr_head%4]);
 // #endif
 				in_head_ = (in_head_ + 1) % DECODE_BUFFER_COUNT;
-				in_cnt_[tid] -= 1;
+				in_cnt_[tid].fetch_sub(1, cuda::memory_order_release);
 				
 				used_bytes += 1;
 
