@@ -11,6 +11,8 @@
 //constexpr int DECODE_BUFFER_COUNT = 256;
 //constexpr int SHM_BUFFER_COUNT = DECODE_BUFFER_COUNT * BLK_SIZE;
 
+using clock_value_t = long long;
+
 namespace rlev2 {
 	template <int READ_UNIT>
 	__global__ void decompress_func_template(const uint8_t* __restrict__ in, const uint64_t n_chunks, const blk_off_t* __restrict__ blk_off, const col_len_t* __restrict__ col_len, int64_t* __restrict__ out) {
@@ -309,7 +311,7 @@ namespace rlev2 {
 		
 
     }
-using clock_value_t = long long;
+
 __device__ void clock_sleep(clock_value_t sleep_cycles)
 {
     clock_value_t start = clock64();
@@ -349,34 +351,16 @@ __device__ void clock_sleep(clock_value_t sleep_cycles)
 				bool read = used_bytes < mychunk_size;
 				unsigned read_sync = __ballot_sync(0xffffffff, read);
 
-// #ifdef DEBUG
-// printf("thread %d with read sync %u\n", tid, read_sync);
-// #endif	
-
 				if (read) {
-				r1:
-					auto curr_cnt = in_cnt_[tid].load(cuda::memory_order_acquire);
-	// if (tid == ERR_THREAD) 				printf("thread %d loop in which 0 with count %d\n", tid, curr_cnt);
-
-					if (curr_cnt + 4 > DECODE_BUFFER_COUNT) {
+					while (in_cnt_[tid].load(cuda::memory_order_acquire) + 4 > DECODE_BUFFER_COUNT) {
 						__nanosleep(100);
-						goto r1;
 					}
 
 					in_[tid][in_tail_].store(in_4B[in_4B_off + __popc(read_sync & t_read_mask)], cuda::memory_order_release);  
-// #ifdef DEBUG
-// if (tid == ERR_THREAD) {
-// 	printf("thread %d read from input %u\n", tid, in_4B[in_4B_off + __popc(read_sync & t_read_mask)]);
-// }
-// #endif	
-					in_4B_off += __popc(read_sync);
-
 					in_cnt_[tid].fetch_add(4, cuda::memory_order_release);
 
-// if (tid == ERR_THREAD)	printf("================================thread %d read 4 from input \n", tid);
-
 					in_tail_ = (in_tail_ + 1) % (DECODE_BUFFER_COUNT / 4);
-
+					in_4B_off += __popc(read_sync);
 					used_bytes += 4;
 				} else {
 					break;
@@ -388,33 +372,15 @@ __device__ void clock_sleep(clock_value_t sleep_cycles)
 
 			uint64_t out_start_idx = cid * CHUNK_SIZE / sizeof(int64_t);
 			int64_t* out_8B = out + (out_start_idx + tid * READ_UNIT); 
-			
-			uint8_t curr_schm = 0;
-			uint8_t curr_fbw = 0, curr_fbw_left = 0;
-			uint8_t first_byte;
-
-			int curr_len = 0;
-			int64_t curr_64;
-			uint8_t bits_left = 0;
-			uint8_t bits_left_over;
-
-			bool dal_read_base = false;
-			int64_t base_val, base_delta, *base_out; // for delta encoding
-			int bw, pw, pgw, pll, patch_gap, curr_pwb_left; // for patched base encoding
-			int curr_write_offset = 0; 
 
 			uint8_t in_head_ = 0;
+			uint8_t curr_write_offset = 0;
 
 			auto read_byte = [&]() {
-			r2:
-				auto curr_cnt = in_cnt_[tid].load(cuda::memory_order_acquire);
-// if (tid == ERR_THREAD) printf("thread %d loop in which 1 %u(%u) with cnt %d\n", tid, used_bytes, mychunk_size, curr_cnt);
-				if (curr_cnt <= 0) {
+				while (in_cnt_[tid].load(cuda::memory_order_acquire) <= 0) {
 					__nanosleep(100);
-					goto r2;
 				}
-// #ifdef DEBUG
-// #endif 
+
 				auto curr32 = in_[tid][in_head_ / 4].load(cuda::memory_order_relaxed);
 				auto ret = ((uint8_t*)&curr32)[in_head_%4];
 // #ifdef DEBUG
@@ -435,9 +401,6 @@ __device__ void clock_sleep(clock_value_t sleep_cycles)
 					curr_write_offset = 0;
 					out_8B += BLK_SIZE * READ_UNIT;
 				}
-				curr_len --;
-				curr_64 = 0;
-				curr_fbw_left = curr_fbw;
 			};
 
 			auto read_uvarint = [&]() {
@@ -458,171 +421,155 @@ __device__ void clock_sleep(clock_value_t sleep_cycles)
 			};
 			
 			while (used_bytes < mychunk_size) {
-				if (curr_schm == 0) {
-					first_byte = read_byte();
-					curr_schm = first_byte & HEADER_MASK;
-					curr_fbw = get_decoded_bit_width((first_byte >> 1) & 0x1f);
-					curr_fbw_left = curr_fbw;
+				auto first = read_byte();
 
-					if (curr_schm != HEADER_SHORT_REPEAT) {
-						curr_len = (((first_byte & 0x01) << 8) | read_byte()) + 1;
-						bits_left = 0; bits_left_over = 0; curr_64 = 0;
-
-						dal_read_base = false;
-						
-						if (curr_schm == HEADER_PACTED_BASE) {
-							auto third = read_byte();
-							auto forth = read_byte();
-
-							bw = ((third >> 5) & 0x07) + 1;
-							pw = get_decoded_bit_width(third & 0x1f);
-							pgw = ((forth >> 5) & 0x07) + 1;
-							pll = forth & 0x1f;
-							patch_gap = 0;
-
-							curr_pwb_left = get_closest_bit(pw + pgw);
-						}
-					}
-				}
-
-				switch(curr_schm) {
+				switch(first & HEADER_MASK) {
 				case HEADER_SHORT_REPEAT: {
-					auto num_bytes = ((first_byte >> 3) & 0x07) + 1;
+					auto nbytes = ((first >> 3) & 0x07) + 1;
+					auto count = (first & 0x07) + MINIMUM_REPEAT;
 					int64_t tmp_int = 0;
-					while (num_bytes-- > 0) {
-						tmp_int |= ((int64_t)read_byte() << (num_bytes * 8));
+					while (nbytes-- > 0) {
+						tmp_int |= ((int64_t)read_byte() << (nbytes * 8));
 					}
-					auto cnt = (first_byte & 0x07) + MINIMUM_REPEAT;
-					while (cnt-- > 0) {
+					while (count-- > 0) {
 						write_int(tmp_int);
 					}
-					curr_schm = 0;
-				}	break;
+				} break;
 				case HEADER_DIRECT: {
-					while (curr_len > 0) {
-						while (curr_fbw_left > bits_left) {
-							curr_64 <<= bits_left;
-							curr_64 |= bits_left_over & ((1 << bits_left) - 1);
-							curr_fbw_left -= bits_left;
-							bits_left_over = read_byte();
+					uint8_t encoded_fbw = (first >> 1) & 0x1f;
+					uint8_t fbw = get_decoded_bit_width(encoded_fbw);
+					uint8_t len = ((static_cast<uint16_t>(first & 0x01) << 8) | read_byte()) + 1;
+					uint8_t bits_left = 0 /* bits left over from unused bits of last byte */, curr_byte = 0;
+					while (len-- > 0) {
+						uint64_t result = 0;
+						uint8_t bits_to_read = fbw;
+						while (bits_to_read > bits_left) {
+							result <<= bits_left;
+							result |= curr_byte & ((1 << bits_left) - 1);
+							bits_to_read -= bits_left;
+							curr_byte = read_byte();
 							bits_left = 8;
 						}
 
-						if (curr_fbw_left <= bits_left) {
-							if (curr_fbw_left > 0) {
-								curr_64 <<= curr_fbw_left;
-								bits_left -= curr_fbw_left;
-								curr_64 |= (bits_left_over >> bits_left) & ((1 << curr_fbw_left) - 1);
-							}
+						if (bits_to_read > 0) {
+							result <<= bits_to_read;
+							bits_left -= bits_to_read;
+							result |= (curr_byte >> bits_left) & ((1 << bits_to_read) - 1);
+						}
 
-							write_int(curr_64);
-						} 
+						write_int(static_cast<int64_t>(result));
 					}
-					
-					curr_schm = 0;
-				}	break;
+				} break;
 				case HEADER_DELTA: {
-					if (!dal_read_base) {
-						dal_read_base = true;
+					uint8_t encoded_fbw = (first >> 1) & 0x1f;
+					uint8_t fbw = get_decoded_bit_width(encoded_fbw);
+					uint8_t len = ((static_cast<uint16_t>(first & 0x01) << 8) | read_byte()) + 1;
 
-						base_val = read_uvarint();
-						base_delta = read_svarint();
-						write_int(base_val);
-						base_val += base_delta;
-						write_int(base_val);
-					}
+					int64_t base_val = static_cast<int64_t>(read_uvarint());
+        			int64_t base_delta = static_cast<int64_t>(read_svarint());
 
-					if (((first_byte >> 1) & 0x1f) != 0) {
-						// var delta
-						while (curr_len > 0) {
-							while (curr_fbw_left > bits_left) {
-								curr_64 <<= bits_left;
-								curr_64 |= bits_left_over & ((1 << bits_left) - 1);
-								curr_fbw_left -= bits_left;
-								bits_left_over = read_byte();
+					write_int(base_val);
+					base_val += base_delta;
+					write_int(base_val);
+
+					len -= 2;
+					int multiplier = (base_delta > 0 ? 1 : -1);
+					if (encoded_fbw != 0) {
+						uint8_t bits_left = 0, curr_byte = 0;
+						while (len-- > 0) {
+							uint64_t result = 0;
+							uint8_t bits_to_read = fbw;
+							while (bits_to_read > bits_left) {
+								result <<= bits_left;
+								result |= curr_byte & ((1 << bits_left) - 1);
+								bits_to_read -= bits_left;
+								curr_byte = read_byte();
 								bits_left = 8;
 							}
 
-							if (curr_fbw_left <= bits_left) {
-								if (curr_fbw_left > 0) {
-									curr_64 <<= curr_fbw_left;
-									bits_left -= curr_fbw_left;
-									curr_64 |= (bits_left_over >> bits_left) & ((1 << curr_fbw_left) - 1);
-								}
-								base_val += curr_64; //TODO: THIS IS NOT ALWAYS +.
-								write_int(base_val);
-							} 
+							if (bits_to_read > 0) {
+								result <<= bits_to_read;
+								bits_left -= bits_to_read;
+								result |= (curr_byte >> bits_left) & ((1 << bits_to_read) - 1);
+							}
+
+							int64_t dlt = static_cast<int64_t>(result) * multiplier;
+							base_val += dlt; 
+							write_int(base_val);
 						}
 					} else {
-						// fixed delta encoding
-						while (curr_len > 0) {
+						while (len-- > 0) {
 							base_val += base_delta;
 							write_int(base_val);
 						}
 					}
-					curr_schm = 0;
-				}	break;
+				} break;	
 				case HEADER_PACTED_BASE: {
-					if (!dal_read_base) {
-						dal_read_base = true;
+					uint8_t encoded_fbw = (first >> 1) & 0x1f;
+					uint8_t fbw = get_decoded_bit_width(encoded_fbw);
+					uint8_t len = ((static_cast<uint16_t>(first & 0x01) << 8) | read_byte()) + 1;
 
-						base_val = 0;
-						auto fbw = bw;
-						while (fbw-- > 0) {
-							base_val |= (read_byte() << (fbw * 8));
-						}
-						base_out = out_8B;
-					} 
+					uint8_t third = read_byte();
+        			uint8_t forth = read_byte();
 
-					while (curr_len > 0) {
-						while (curr_fbw_left > bits_left) {
-							curr_64 <<= bits_left;
-							curr_64 |= bits_left_over & ((1 << bits_left) - 1);
-							curr_fbw_left -= bits_left;
-							bits_left_over = read_byte();
+					uint8_t bw = ((third >> 5) & 0x07) + 1;
+					uint8_t pw = get_decoded_bit_width(third & 0x1f);
+					uint8_t pgw = ((forth >> 5) & 0x07) + 1;
+					uint8_t pll = forth & 0x1f;
+
+					uint16_t patch_mask = (static_cast<uint16_t>(1) << pw) - 1;
+
+					auto base_out = out_8B;
+
+					int64_t base_val = 0 ;
+					for (int i=bw-1; i>=0; --i) {
+						base_val |= (read_byte() << (fbw * 8));
+					}
+
+					uint8_t bits_left = 0 /* bits left over from unused bits of last byte */, curr_byte = 0;
+					while (len-- > 0) {
+						uint64_t result = 0;
+						uint8_t bits_to_read = fbw;
+						while (bits_to_read > bits_left) {
+							result <<= bits_left;
+							result |= curr_byte & ((1 << bits_left) - 1);
+							bits_to_read -= bits_left;
+							curr_byte = read_byte();
 							bits_left = 8;
 						}
 
-						if (curr_fbw_left <= bits_left) {
-							if (curr_fbw_left > 0) {
-								curr_64 <<= curr_fbw_left;
-								bits_left -= curr_fbw_left;
-								curr_64 |= (bits_left_over >> bits_left) & ((1 << curr_fbw_left) - 1);
-							}
-							curr_64 += base_val;
-							write_int(curr_64);
-						} 
+						if (bits_to_read > 0) {
+							result <<= bits_to_read;
+							bits_left -= bits_to_read;
+							result |= (curr_byte >> bits_left) & ((1 << bits_to_read) - 1);
+						}
+						
+						write_int(static_cast<int64_t>(result) + base_val);
 					}
 
-					auto patch_mask = (static_cast<uint16_t>(1) << pw) - 1;
-					while (pll > 0) {
-						while (curr_pwb_left > bits_left) {
-							curr_64 <<= bits_left;
-							curr_64 |= bits_left_over & ((1 << bits_left) - 1);
-							curr_pwb_left -= bits_left;
-							bits_left_over = read_byte();
+					bits_left = 0, curr_byte = 0;
+					fbw = get_closest_bit(pw + pgw);
+					int patch_gap = 0;
+					while (pll-- > 0) {
+						uint64_t result = 0;
+						uint8_t bits_to_read = fbw;
+						while (bits_to_read > bits_left) {
+							result <<= bits_left;
+							result |= curr_byte & ((1 << bits_left) - 1);
+							bits_to_read -= bits_left;
+							curr_byte = read_byte();
 							bits_left = 8;
 						}
+						
+						if (bits_to_read > 0) {
+							result <<= bits_to_read;
+							bits_left -= bits_to_read;
+							result |= (curr_byte >> bits_left) & ((1 << bits_to_read) - 1);
+						}
 
-						if (curr_pwb_left <= bits_left) {
-							if (curr_pwb_left > 0) {
-								curr_64 <<= curr_pwb_left;
-								bits_left -= curr_pwb_left;
-								curr_64 |= (bits_left_over >> bits_left) & ((1 << curr_pwb_left) - 1);
-							}
-
-							patch_gap += curr_64 >> pw;
-							base_out[(patch_gap / READ_UNIT) * BLK_SIZE + (patch_gap % READ_UNIT)] |= static_cast<int64_t>(curr_64 & patch_mask) << curr_fbw;
-
-							pll --;
-							curr_64 = 0;
-							curr_pwb_left = get_closest_bit(pw + pgw);
-						} 
+						patch_gap += result >> pw;
+						base_out[(patch_gap / READ_UNIT) * BLK_SIZE + (patch_gap % READ_UNIT)] |= static_cast<int64_t>(result & patch_mask) << fbw;
 					}
-					curr_schm = 0; 
-				}	break;
-				default: {
-					curr_schm = 0;
 				} break;
 				}
 			}
