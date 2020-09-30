@@ -5,8 +5,8 @@
 #define ERR_CHUNK 0
 
 // #define DEBUG
-
-constexpr int READ_GRANULARITY = 1;
+constexpr int WRITE_VEC_SIZE = 4;
+constexpr int READ_GRANULARITY = 4;
 constexpr int DECODE_UNIT = 4; 
 constexpr uint64_t VARINT_MASK = 0x7f;
 
