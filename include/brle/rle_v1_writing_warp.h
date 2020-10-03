@@ -22,7 +22,7 @@ constexpr uint16_t BLK_SIZE_() { return (32); }
 constexpr uint16_t BLKS_SM_() { return (THRDS_SM_() / BLK_SIZE_()); }
 constexpr uint64_t GRID_SIZE_() { return (1024); }
 constexpr uint64_t NUM_CHUNKS_() { return (GRID_SIZE_() * BLK_SIZE_()); }
-constexpr uint64_t CHUNK_SIZE_() { return (4 * 1024 * 4); }
+constexpr uint64_t CHUNK_SIZE_() { return (4 * 1024); }
 constexpr uint64_t INPUT_BUFFER_SIZE() { return (8); }
 constexpr uint64_t CHUNK_SIZE_4() { return (128); }
 
@@ -961,7 +961,7 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
   __shared__ simt::atomic<uint8_t,  simt::thread_scope_block> out_tail[32];
   __shared__ READ_T output_buffer[32][OUT_BUFFER_SIZE];
 
-  __shared__ uint32_t write_off[32];
+  __shared__ uint8_t write_off[32];
 
 
 
@@ -969,6 +969,9 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
   int chunk_idx = blockIdx.x;
   uint8_t which = threadIdx.y;
   uint64_t in_start_idx = blk_offset[chunk_idx];
+
+  //if(tid == 0 && chunk_idx ==0)
+   // printf("in chunk size: %llu\n", in_chunk_size);
 
  //initalize queue information
   if(which == 0){
@@ -1056,7 +1059,8 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
 
     while (used_iterations < write_iterations) {
      
-      if(DATA_BUFFER_SIZE - data_buffer_count > read_byte){
+    //  if(DATA_BUFFER_SIZE - data_buffer_count > read_byte){
+      if(data_buffer_count == 0){
       r_decomp_compute_read:
         const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
         if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
@@ -1302,7 +1306,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
           const auto cur_head = out_head[cur_idx].load(simt::memory_order_relaxed);
           const auto cur_tail = out_tail[cur_idx].load(simt::memory_order_acquire);
 
-
           uint16_t count_num = 0;
           if(cur_tail > cur_head){
             if(cur_tail - cur_head >= 32){
@@ -1320,8 +1323,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
               reading_index = cur_idx;
               reading_head = cur_head;
               cur_idx = (cur_idx + 1) % 32;
-              goto read_write_done;
-
               goto read_write_done;
             }
           }
@@ -1346,86 +1347,12 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out,
         out[out_start_offset + + write_off[reading_index] * num_row * 32 + 32 * reading_index + tid] = read_data;
       
       __syncwarp();
+
+
       if(tid == 0) {
-          write_off[reading_index] = write_off[reading_index] + 1;
           out_head[reading_index].store(next_head, simt::memory_order_release);
-      }
-      used_iterations++;
+          write_off[reading_index] = write_off[reading_index] + 1;
 
-    }
-  }
-
-else if(which == 3){
-    __shared__ uint8_t reading_index2;
-    __shared__ uint8_t reading_head2;
-
-
-    uint32_t used_iterations = 0;
-    uint32_t total_iterations = in_chunk_size / 32 / sizeof(READ_T)/2;
-    int cur_idx = 16;
-    uint32_t num_row = 32;
-    uint32_t eles_in_chunks = in_chunk_size / sizeof(READ_T);
-    uint32_t out_start_offset = eles_in_chunks * chunk_idx;
-
-    uint8_t next_head = 0;
-
-    __syncwarp();
-
-
-    while(used_iterations < total_iterations) {
-       
-      if(tid == 0){
-        while(1){
-          
-          const auto cur_head = out_head[cur_idx].load(simt::memory_order_relaxed);
-          const auto cur_tail = out_tail[cur_idx].load(simt::memory_order_acquire);
-
-
-          uint16_t count_num = 0;
-          if(cur_tail > cur_head){
-            if(cur_tail - cur_head >= 32){
-              next_head = (cur_head + 32) % OUT_BUFFER_SIZE;
-              reading_index2 = cur_idx;
-              reading_head2 = cur_head;
-              cur_idx = (cur_idx + 1) % 16 + 16;
-              goto read_write_done2;
-            }
-          }
-
-          else if (cur_tail < cur_head){
-            if((OUT_BUFFER_SIZE - 1 - (cur_head - cur_tail - 1)) >= 32) {
-              next_head = (cur_head + 32) % OUT_BUFFER_SIZE;
-              reading_index2 = cur_idx;
-              reading_head2 = cur_head;
-              cur_idx = (cur_idx + 1) % 16 + 16;
-              goto read_write_done2;
-
-            }
-          }
-
-            cur_idx = (cur_idx + 1) % 16 + 16;
-          
-        }
-      }
-      //label to break the while loop
-      read_write_done2:
-  
-      
-       //sync threads to read the data
-      __syncwarp();
-      //get data from reading queue
-      uint8_t my_head = (reading_head2 + tid) % OUT_BUFFER_SIZE;
-      READ_T read_data = output_buffer[reading_index2][my_head];
-
-    
-       __syncwarp();
-      
-        out[out_start_offset + + write_off[reading_index2] * num_row * 32 + 32 * reading_index2 + tid] = read_data;
-      
-      __syncwarp();
-      if(tid == 0) {
-          write_off[reading_index2] = write_off[reading_index2] + 1;
-          out_head[reading_index2].store(next_head, simt::memory_order_release);
       }
       used_iterations++;
 
