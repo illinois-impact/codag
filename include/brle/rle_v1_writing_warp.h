@@ -1051,11 +1051,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
 
    unsigned long long write_vec_array[4]; 
 
-    // unsigned long long write_vec1 = 0;
-    // unsigned long long write_vec2 = 0;
-    // unsigned long long write_vec3 = 0;
-    // unsigned long long write_vec4 = 0;
-    
 
     unsigned long long temp_vector = 0;
     int num_ele_in_vec = sizeof(unsigned long long) / sizeof(READ_T);
@@ -1067,9 +1062,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
 
     int8_t read_data;
 
-    //ulonglong4 write_vector = make_ulonglong4(0, 0, 0, 0);
-
-
 
     while (used_iterations < write_iterations) {
 
@@ -1077,7 +1069,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
       r_decomp_compute_read:
         const auto cur_head = in_head[tid].load(simt::memory_order_relaxed); 
         if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
-            __nanosleep(100);
             goto r_decomp_compute_read;
         }
 
@@ -1105,7 +1096,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
              r_decomp_compute_read2:
                 const auto cur_head = in_head[tid].load(simt::memory_order_relaxed); 
                 if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
-                    __nanosleep(100);
                     goto r_decomp_compute_read2;
                 }
 
@@ -1128,7 +1118,7 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
              r_decomp_compute_read3:
                 const auto cur_head = in_head[tid].load(simt::memory_order_relaxed); 
                 if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
-                    __nanosleep(100);
+                   // __nanosleep(100);
                     goto r_decomp_compute_read3;
                 }
 
@@ -1170,17 +1160,12 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
 
                 if(temp_vector_count == num_ele_in_vec) {
 
-
-          
-                //write_vector = write_vector | ((ulonglong4) (temp_vector << (64 * array_count)));
-
                 write_vec_array[array_count] = temp_vector;
                 array_count ++;
 
                 if(array_count == 4){
                   
                   ulonglong4 write_vector = make_ulonglong4(write_vec_array[0], write_vec_array[1], write_vec_array[2], write_vec_array[3]);
-                  //ulonglong2 write_vector = make_ulonglong2(write_vec_array[0], write_vec_array[1]);
 
                   ((ulonglong4*)(out + out_start_offset + line_count * 32 * 32 + col_idx * 32 + byte_count))[0] = write_vector;
 
@@ -1215,7 +1200,7 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
                r_decomp_compute_read4:
                 const auto cur_head = in_head[tid].load(simt::memory_order_relaxed); 
                 if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
-                    __nanosleep(100);
+                   // __nanosleep(100);
                     goto r_decomp_compute_read4;
                 }
 
