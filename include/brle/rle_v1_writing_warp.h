@@ -95,7 +95,7 @@ constexpr uint32_t CHUNK_SIZE_4_BYTES_MASK_() {
 #define READING_WARP_SIZE 16
 #define WRITING_WARP_SIZE 16
 
-#define DATA_BUFFER_SIZE 16
+#define DATA_BUFFER_SIZE 8
 
 #define NUM_THREADS 32
 
