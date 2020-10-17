@@ -954,10 +954,14 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
   uint8_t which = threadIdx.y;
   uint64_t read_chunk_size = col_len[BLK_SIZE * chunk_idx + tid];
 
+  uint64_t* test_p;
+
+
   if(tid == 0 && which == 0){
     in_start_idx = blk_offset[chunk_idx];
   }
 
+  test_p =
   //if(tid == 0 && chunk_idx ==0)
    // printf("in chunk size: %llu\n", in_chunk_size);
 
@@ -1329,6 +1333,7 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
           int64_t out_ele = value + static_cast<int64_t>(i) * delta;
 
           ((INPUT_T*)&temp_write_word)[temp_word_count] = static_cast<INPUT_T>(out_ele);
+          //temp_write_word = temp_write_word | (out_ele )
           temp_word_count++;
 
            if(temp_word_count == read_input_count){
