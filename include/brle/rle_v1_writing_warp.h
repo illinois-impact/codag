@@ -22,7 +22,7 @@ constexpr uint16_t BLK_SIZE_() { return (32); }
 constexpr uint16_t BLKS_SM_() { return (THRDS_SM_() / BLK_SIZE_()); }
 constexpr uint64_t GRID_SIZE_() { return (1024); }
 constexpr uint64_t NUM_CHUNKS_() { return (GRID_SIZE_() * BLK_SIZE_()); }
-constexpr uint64_t CHUNK_SIZE_() { return (4 * 1024); }
+constexpr uint64_t CHUNK_SIZE_() { return (8 * 1024); }
 constexpr uint64_t INPUT_BUFFER_SIZE() { return (8); }
 constexpr uint64_t CHUNK_SIZE_4() { return (128); }
 
@@ -92,7 +92,7 @@ constexpr uint32_t CHUNK_SIZE_4_BYTES_MASK_() {
 
 #define char_len 4
 
-#define READING_WARP_SIZE 48
+#define READING_WARP_SIZE 32
 #define WRITING_WARP_SIZE 16
 
 #define DATA_BUFFER_SIZE 8
@@ -1158,7 +1158,7 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
           int64_t out_ele = value + static_cast<int64_t>(i) * delta;
 
          // ((INPUT_T*)&temp_write_word)[temp_word_count] = static_cast<INPUT_T>(out_ele);
-          temp_write_word = temp_write_word | (static_cast<INPUT_T>(out_ele) << (temp_word_count * sizeof(INPUT_T) * 8));
+          temp_write_word = temp_write_word | (static_cast<READ_T>(out_ele) << (temp_word_count * sizeof(INPUT_T) * 8));
 
           //temp_write_word = temp_write_word | (out_ele )
           temp_word_count++;
@@ -1171,6 +1171,7 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
                 if(temp_vector_count == num_ele_in_vec) {
 
                 write_vec_array[array_count] = temp_vector;
+
                 array_count ++;
 
                 if(array_count == 4){
@@ -1179,7 +1180,8 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
 
                   ((ulonglong4*)(out + out_start_offset + line_count * 32 * 32 + col_idx * 32 + byte_count))[0] = write_vector;
 
-                  byte_count += (32 / sizeof(INPUT_T));
+                  byte_count += (32 / sizeof(READ_T));
+                   //byte_count++;
                    if(byte_count == 32){
                       byte_count = 0;
                       line_count ++;
@@ -1240,7 +1242,7 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
           //end of real val
 
           //((INPUT_T*)&temp_write_word)[temp_word_count] = static_cast<INPUT_T>(value);
-          temp_write_word = temp_write_word | (static_cast<INPUT_T>(value) << (temp_word_count * sizeof(INPUT_T) * 8));
+          temp_write_word = temp_write_word | (static_cast<READ_T>(value) << (temp_word_count * sizeof(INPUT_T) * 8));
 
           temp_word_count++;
           
@@ -1256,7 +1258,6 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
                 if(temp_vector_count == num_ele_in_vec) {
                   //write_vector = write_vector | (temp_vector << (64 * array_count));
 
-
                 
                   write_vec_array[array_count] = temp_vector;
                   array_count ++;
@@ -1269,7 +1270,7 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
                     ((ulonglong4*)(out + out_start_offset + line_count * 32 * 32 + col_idx * 32 + byte_count))[0] = write_vector;
 
 
-                    byte_count += (32 / sizeof(INPUT_T));
+                    byte_count += (32 / sizeof(READ_T));
                      if(byte_count == 32){
                         byte_count = 0;
                         line_count ++;
