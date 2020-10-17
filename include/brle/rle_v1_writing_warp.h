@@ -952,22 +952,21 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
   int tid = threadIdx.x;
   int chunk_idx = blockIdx.x;
   uint8_t which = threadIdx.y;
-  uint64_t read_chunk_size = col_len[BLK_SIZE * chunk_idx + tid];
+  uint64_t read_chunk_size = 0;
 
-  uint64_t* test_p;
 
 
   if(tid == 0 && which == 0){
     in_start_idx = blk_offset[chunk_idx];
   }
 
-  //if(tid == 0 && chunk_idx ==0)
-   // printf("in chunk size: %llu\n", in_chunk_size);
+
 
  //initalize queue information
   if(which == 0){
     in_head[tid] = 0;
     in_tail[tid] = 0;
+    read_chunk_size = col_len[BLK_SIZE * chunk_idx + tid];
  
   }
 
@@ -980,10 +979,8 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
     uint64_t used_bytes = 0;
     uint32_t in_read_off = 0;
     uint64_t ele_size = sizeof(READ_T);
-   // uint64_t col_idx = col_map[BLK_SIZE * chunk_idx + tid];
 
     for(int j = 0; j < read_chunk_size; j += ele_size) {
-  //  while(used_bytes < read_chunk_size){
       unsigned mask = __activemask(); 
       int res =  __popc(mask);
       __syncwarp(mask);
@@ -1013,61 +1010,16 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
         }
       __syncwarp(mask);
     }
-    //   r_decomp_read:
-    //       const auto cur_tail = in_tail[tid].load(simt::memory_order_relaxed);
-    //       const auto cur_head = in_head[tid].load(simt::memory_order_acquire);
-
-    //       const auto next_tail = (cur_tail  + ele_size) % READING_WARP_SIZE;
-
-
-    //       int read_queue_count = (cur_tail - cur_head);
-
-    //       if(read_queue_count >= 0 && read_queue_count < (READING_WARP_SIZE - 1 - ele_size)) {
-
-    //         //store
-    //         used_bytes += sizeof(READ_T);
-
-    //         for(int i = 0; i < ele_size; i++) {
-    //          input_buffer[cur_tail+i][tid] = ((int8_t*)(&temp_store))[i];
-    //         }
-
-    //         in_tail[tid].store(next_tail, simt::memory_order_release);
-            
-    //         goto r_decomp_read_next;
-          
-    //       }
-    //       else if(read_queue_count < 0) {
-
-    //         read_queue_count = READING_WARP_SIZE - 1 + read_queue_count;
-    //         if( read_queue_count < (READING_WARP_SIZE - 1 - ele_size)){
-    //           //store
-    //           used_bytes += sizeof(READ_T);
-    //           for(int i = 0; i < ele_size; i++) {
-    //            input_buffer[(cur_tail+i)%READING_WARP_SIZE][tid] = ((int8_t*)(&temp_store))[i];
-    //           }
-
-    //           in_tail[tid].store(next_tail, simt::memory_order_release);
-    //            goto r_decomp_read_next;
-    //         }
-
-    //       }
-
-    //         goto r_decomp_read;
-
-    //   r_decomp_read_next:
-  
-    //   __syncwarp(mask);
-    // }
 
   }
 
   else if (which == 1){
     uint64_t used_iterations = 0;
 
-    int8_t data_buffer[DATA_BUFFER_SIZE];
-    uint8_t data_buffer_head = 0;
-    uint8_t data_buffer_tail = 0;
-    uint8_t data_buffer_count = 0;
+    // int8_t data_buffer[DATA_BUFFER_SIZE];
+    // uint8_t data_buffer_head = 0;
+    // uint8_t data_buffer_tail = 0;
+    // uint8_t data_buffer_count = 0;
 
     uint8_t read_byte = 1;
     uint8_t input_byte = sizeof(INPUT_T);
@@ -1097,88 +1049,47 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
     uint32_t line_count = 0;
     uint32_t byte_count = 0;
 
-    unsigned long long write_vec_array[4]; 
+   unsigned long long write_vec_array[4]; 
+
+    // unsigned long long write_vec1 = 0;
+    // unsigned long long write_vec2 = 0;
+    // unsigned long long write_vec3 = 0;
+    // unsigned long long write_vec4 = 0;
+    
+
     unsigned long long temp_vector = 0;
     int num_ele_in_vec = sizeof(unsigned long long) / sizeof(READ_T);
     uint8_t temp_vector_count = 0;
     uint8_t array_count = 0;
 
     uint64_t used_read_bytes = 0;
-    uint64_t total_read_bytes = read_chunk_size;
 
+
+    int8_t read_data;
+
+    //ulonglong4 write_vector = make_ulonglong4(0, 0, 0, 0);
 
 
 
     while (used_iterations < write_iterations) {
 
 
-            if(data_buffer_count == 0){
-              r_decomp_compute_read:
-                const auto cur_head = in_head[tid].load(simt::memory_order_relaxed); 
-                if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
-                    __nanosleep(100);
-                    goto r_decomp_compute_read;
-                }
+      r_decomp_compute_read:
+        const auto cur_head = in_head[tid].load(simt::memory_order_relaxed); 
+        if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
+            __nanosleep(100);
+            goto r_decomp_compute_read;
+        }
 
-              int8_t read_data = input_buffer[cur_head][tid];
-              const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
-              in_head[tid].store(next_head, simt::memory_order_release);
-              int8_t temp_read_data = read_data;
-             
-              for(uint8_t i = 0; i < read_byte; i++){
-                data_buffer[data_buffer_tail] = ((int8_t*)(&temp_read_data))[i];
-                data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
-              }
-              data_buffer_count += read_byte;
-
-              used_read_bytes += read_byte;
-
-            }
-     
-      
-   //    if(data_buffer_count == 0) {
-   //  //if(used_read_bytes < total_read_bytes){
-   //    r_decomp_compute_read:
-   //      const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
-   //      const auto cur_tail = in_tail[tid].load(simt::memory_order_acquire);
-   //      int read_queue_count = cur_tail - cur_head;
-
-   //      if(cur_head == cur_tail){
-   //         if(data_buffer_count == 0){
-   //          __nanosleep(100);
-   //          goto r_decomp_compute_read;
-   //        }
-   //      }
-
-   //      if(read_queue_count < 0) {
-   //        read_queue_count = read_queue_count + READING_WARP_SIZE - 1 ;
-   //      }
+      read_data = input_buffer[cur_head][tid];
+      const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
+      in_head[tid].store(next_head, simt::memory_order_release);
+      used_read_bytes += read_byte;
 
     
-   //        int buf_remain = DATA_BUFFER_SIZE - data_buffer_count;
-   //        int buf_add_size = min(buf_remain, read_queue_count);
-
-   //        for(int i = 0; i < buf_add_size; i++) {
-   //          data_buffer[data_buffer_tail] = input_buffer[(cur_head + i) % READING_WARP_SIZE][tid];
-   //          data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
-   //        }
-
-   //        const auto next_head = (cur_head + buf_add_size) % READING_WARP_SIZE;
-   //        in_head[tid].store(next_head, simt::memory_order_release);
-   //        data_buffer_count += buf_add_size;
-   //        used_read_bytes += buf_add_size;
-           
-   //  // }
-   // }
-
-
-     r_decomp_read_skip:
-
       //need to read a header
       if(header_read){
-          head_byte = data_buffer[data_buffer_head];
-          data_buffer_count --;
-          data_buffer_head = (data_buffer_head + 1) % DATA_BUFFER_SIZE;
+          head_byte = read_data;
           header_read = false;
 
           //literals
@@ -1191,64 +1102,19 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
             remaining = static_cast<uint64_t>(head_byte);
             comp_flag = true;
 
-            //may have to check the count
-            if(data_buffer_count == 0){
-              r_decomp_compute_read2:
-                const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
+             r_decomp_compute_read2:
+                const auto cur_head = in_head[tid].load(simt::memory_order_relaxed); 
                 if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
-                  __nanosleep(100);
-                  goto r_decomp_compute_read2;
+                    __nanosleep(100);
+                    goto r_decomp_compute_read2;
                 }
 
-                  int8_t new_read_data = input_buffer[cur_head][tid];
-                  const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
-                  in_head[tid].store(next_head, simt::memory_order_release);
-                  int8_t temp_read_data = new_read_data;
+              read_data = input_buffer[cur_head][tid];
+              const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
+              in_head[tid].store(next_head, simt::memory_order_release);
+              used_read_bytes += read_byte;
 
-                  for(uint8_t i = 0; i < read_byte; i++){
-                    data_buffer[data_buffer_tail] = ((int8_t*)(&temp_read_data))[i];
-                    data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
-                  }
-                 data_buffer_count += read_byte;
-                 used_read_bytes += read_byte;
-            }
-           //      if(used_read_bytes < total_read_bytes){
-           //        r_decomp_compute_read2:
-           //          const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
-           //          const auto cur_tail = in_tail[tid].load(simt::memory_order_acquire);
-           //          int read_queue_count = cur_tail - cur_head;
-
-           //          if(read_queue_count < 0) {
-           //            read_queue_count = read_queue_count + READING_WARP_SIZE - 1;
-           //          }
-
-           //          if(read_queue_count == 0) {
-           //            if(data_buffer_count == 0){
-           //              __nanosleep(100);
-           //              goto r_decomp_compute_read2;
-           //            }
-           //          }
-           //          else {
-           //            int buf_remain = DATA_BUFFER_SIZE - data_buffer_count - 1;
-           //           // int buf_add_size = min(buf_remain, read_queue_count);
-           // int buf_add_size = min(buf_remain, 1);
-
-
-           //            for(int i = 0; i < buf_add_size; i++) {
-           //              data_buffer[data_buffer_tail] = input_buffer[(cur_head + i) % READING_WARP_SIZE][tid];
-           //              data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
-           //            }
-
-           //            const auto next_head = (cur_head + buf_add_size) % READING_WARP_SIZE;
-           //            in_head[tid].store(next_head, simt::memory_order_release);
-           //            data_buffer_count += buf_add_size;
-           //              used_read_bytes += buf_add_size;
-           //          }    
-           //       }
-
-            delta = data_buffer[data_buffer_head];
-            data_buffer_head = (data_buffer_head + 1) % DATA_BUFFER_SIZE;
-            data_buffer_count--;
+            delta = read_data;
             read_val_flag = true;
           }
       }
@@ -1257,66 +1123,23 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
         value = 0;
         int64_t offset = 0;
         while(read_val_flag){
-          if(data_buffer_count == 0){
-            r_value_read:
-            const auto cur_head = in_head[tid].load(simt::memory_order_relaxed); 
-            if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
-              __nanosleep(100);
-              goto r_value_read;
-            }
 
-            int8_t read_data = input_buffer[cur_head][tid];
-            const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
-            in_head[tid].store(next_head, simt::memory_order_release);
-            int8_t temp_read_data = read_data;
-             
-            for(uint8_t i = 0; i < read_byte; i++){
-              data_buffer[data_buffer_tail] = ((int8_t*)(&temp_read_data))[i];
-              data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
-            }
-            data_buffer_count += read_byte;
-            used_read_bytes += read_byte;
-          }
 
-          // if(data_buffer_count == 0){
-          //   if(used_read_bytes < total_read_bytes){
-          //     r_value_read:
-          //     const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
-          //     const auto cur_tail = in_tail[tid].load(simt::memory_order_acquire);
-          //     int read_queue_count = cur_tail - cur_head;
+             r_decomp_compute_read3:
+                const auto cur_head = in_head[tid].load(simt::memory_order_relaxed); 
+                if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
+                    __nanosleep(100);
+                    goto r_decomp_compute_read3;
+                }
 
-          //     if(cur_head == cur_tail){
-          //        if(data_buffer_count == 0){
-          //         __nanosleep(100);
-          //         goto r_value_read;
-          //       }
-          //     }
+              read_data = input_buffer[cur_head][tid];
+              const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
+              in_head[tid].store(next_head, simt::memory_order_release);
+              used_read_bytes += read_byte;
 
-          //     int buf_remain = DATA_BUFFER_SIZE - data_buffer_count;
-          //     if(buf_remain != 0) {
-          //       if(read_queue_count < 0) {
-          //         read_queue_count = read_queue_count + READING_WARP_SIZE - 1 ;
-          //       }
-
-          //         int buf_remain = DATA_BUFFER_SIZE - data_buffer_count;
-          //         int buf_add_size = min(buf_remain, read_queue_count);
-
-          //         for(int i = 0; i < buf_add_size; i++) {
-          //           data_buffer[data_buffer_tail] = input_buffer[(cur_head + i) % READING_WARP_SIZE][tid];
-          //           data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
-          //         }
-
-          //         const auto next_head = (cur_head + buf_add_size) % READING_WARP_SIZE;
-          //         in_head[tid].store(next_head, simt::memory_order_release);
-          //         data_buffer_count += buf_add_size;
-          //         used_read_bytes += buf_add_size;
-          //     }
-          //   }
-          // }
-
-          int8_t in_data = data_buffer[data_buffer_head];
-          data_buffer_head = (data_buffer_head + 1) % DATA_BUFFER_SIZE;
-          data_buffer_count--;
+      
+             int8_t in_data = read_data;
+ 
       
           if(in_data >= 0){
             value |= (static_cast<INPUT_T>(in_data) << offset);
@@ -1348,16 +1171,19 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
                 if(temp_vector_count == num_ele_in_vec) {
 
 
+          
+                //write_vector = write_vector | ((ulonglong4) (temp_vector << (64 * array_count)));
+
                 write_vec_array[array_count] = temp_vector;
                 array_count ++;
 
                 if(array_count == 4){
-
+                  
                   ulonglong4 write_vector = make_ulonglong4(write_vec_array[0], write_vec_array[1], write_vec_array[2], write_vec_array[3]);
                   //ulonglong2 write_vector = make_ulonglong2(write_vec_array[0], write_vec_array[1]);
 
                   ((ulonglong4*)(out + out_start_offset + line_count * 32 * 32 + col_idx * 32 + byte_count))[0] = write_vector;
-                  
+
                   byte_count += (32 / sizeof(INPUT_T));
                    if(byte_count == 32){
                       byte_count = 0;
@@ -1386,67 +1212,21 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
 
           while(read_val_flag){
 
-            if(data_buffer_count == 0){
-              r_value_read2:
+               r_decomp_compute_read4:
                 const auto cur_head = in_head[tid].load(simt::memory_order_relaxed); 
                 if (cur_head == in_tail[tid].load(simt::memory_order_acquire)) {
                     __nanosleep(100);
-                    goto r_value_read2;
+                    goto r_decomp_compute_read4;
                 }
 
-              int8_t read_data = input_buffer[cur_head][tid];
+              read_data = input_buffer[cur_head][tid];
               const auto next_head = (cur_head + 1) % READING_WARP_SIZE;
               in_head[tid].store(next_head, simt::memory_order_release);
-              int8_t temp_read_data = read_data;
-             
-              for(uint8_t i = 0; i < read_byte; i++){
-                data_buffer[data_buffer_tail] = ((int8_t*)(&temp_read_data))[i];
-                data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
-              }
-              data_buffer_count += read_byte;
-
               used_read_bytes += read_byte;
+    
 
-            }
-         // if(data_buffer_count == 0){
-         //    if(used_read_bytes < total_read_bytes){
-         //      r_value_read2:
-         //      const auto cur_head = in_head[tid].load(simt::memory_order_relaxed);
-         //      const auto cur_tail = in_tail[tid].load(simt::memory_order_acquire);
-         //      int read_queue_count = cur_tail - cur_head;
+            int8_t in_data = read_data;
 
-         //      if(cur_head == cur_tail){
-         //         if(data_buffer_count == 0){
-         //          __nanosleep(100);
-         //          goto r_value_read2;
-         //        }
-         //      }
-         //        int buf_remain = DATA_BUFFER_SIZE - data_buffer_count;
-         //        if(buf_remain != 0) {
-         //          if(read_queue_count < 0) {
-         //            read_queue_count = read_queue_count + READING_WARP_SIZE - 1 ;
-         //          }
-
-              
-         //          int buf_add_size = min(buf_remain, read_queue_count);
-
-         //          for(int i = 0; i < buf_add_size; i++) {
-         //            data_buffer[data_buffer_tail] = input_buffer[(cur_head + i) % READING_WARP_SIZE][tid];
-         //            data_buffer_tail = (data_buffer_tail + 1) % DATA_BUFFER_SIZE;
-         //          }
-
-         //          const auto next_head = (cur_head + buf_add_size) % READING_WARP_SIZE;
-         //          in_head[tid].store(next_head, simt::memory_order_release);
-         //          data_buffer_count += buf_add_size;
-         //          used_read_bytes += buf_add_size;
-         //      }
-         //    }
-         //  }
-
-
-            int8_t in_data = data_buffer[data_buffer_head];
-            data_buffer_head = (data_buffer_head + 1) % DATA_BUFFER_SIZE;
-            data_buffer_count--;
 
             if(in_data >= 0){
               value |= (static_cast<INPUT_T>(in_data) << offset);
@@ -1474,25 +1254,20 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
                 temp_vector_count++;
 
                 if(temp_vector_count == num_ele_in_vec) {
-//                 if(temp_vector_count == (sizeof(READ_T) / sizeof(INPUT_T))) {
-//                  // ((READ_T*)(out + out_start_offset + line_count * 32 * 32 + col_idx * 32 + byte_count))[0] = temp_vector;   
-//                                    out[out_start_offset + line_count * 32 * 32 + col_idx * 32 + byte_count] = temp_vector;   
+                  //write_vector = write_vector | (temp_vector << (64 * array_count));
 
-//                   byte_count +=1;
 
-// //                  byte_count += sizeof(READ_T);
-//                      if(byte_count == 32){
-//                         byte_count = 0;
-//                         line_count ++;
-//                      }
+                
                   write_vec_array[array_count] = temp_vector;
                   array_count ++;
 
                   if(array_count == 4){
-                    ulonglong4 write_vector = make_ulonglong4(write_vec_array[0], write_vec_array[1], write_vec_array[2], write_vec_array[3]);
+                  //  ulonglong4 write_vector = make_ulonglong4(write_vec1, write_vec2, write_vec3, write_vec4);
                    // ulonglong2 write_vector = make_ulonglong2(write_vec_array[0], write_vec_array[1]);
+                     ulonglong4 write_vector = make_ulonglong4(write_vec_array[0], write_vec_array[1], write_vec_array[2], write_vec_array[3]);
 
                     ((ulonglong4*)(out + out_start_offset + line_count * 32 * 32 + col_idx * 32 + byte_count))[0] = write_vector;
+
 
                     byte_count += (32 / sizeof(INPUT_T));
                      if(byte_count == 32){
