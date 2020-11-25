@@ -979,40 +979,42 @@ rlev1_decompress_multi_reading(const int8_t *const in, READ_T* out, const uint64
     uint64_t used_bytes = 0;
     uint32_t in_read_off = 0;
     uint64_t ele_size = sizeof(READ_T);
+    uint64_t read_bytes = 0;
 
-    for(int j = 0; j < read_chunk_size; j += ele_size) {
-      unsigned mask = __activemask(); 
-      int res =  __popc(mask);
-      __syncwarp(mask);
+    while(true) {
 
-      READ_T* inTyped = (READ_T*)(in + in_start_idx + in_read_off + tid * ele_size);
-      READ_T temp_store = *inTyped;
-      in_read_off += res * ele_size;
+      bool alive = (read_bytes < read_chunk_size);
+      auto alivemask  = __ballot_sync(0xFFFFFFFF, alive);
+      int res =  __popc(alivemask);
+      read_bytes += ele_size;
 
- 
-     // for(int i  = 0; i < ele_size; i++){
+      if(res == 0)
+        break;
 
-      r_decomp_read:
-          const auto cur_tail = in_tail[tid].load(simt::memory_order_relaxed);
-          const auto next_tail = (cur_tail  + 1) % READING_WARP_SIZE;
+      if(alive){
+        READ_T* inTyped = (READ_T*)(in + in_start_idx + in_read_off + tid * ele_size);
+        READ_T temp_store = *inTyped;
+        in_read_off += (res * ele_size);
+   
+       // for(int i  = 0; i < ele_size; i++){
 
-          if (next_tail != in_head[tid].load(simt::memory_order_acquire)) {
-           // int8_t temp_store_byte = (temp_store >> (i * 8)) & (0xff);
-          //  input_buffer[cur_tail][tid] = ((int8_t*)(&temp_store))[i];
-           // input_buffer[cur_tail][tid] = temp_store_byte;
-            input_buffer[cur_tail][tid] = temp_store;
+        r_decomp_read:
+            const auto cur_tail = in_tail[tid].load(simt::memory_order_relaxed);
+            const auto next_tail = (cur_tail  + 1) % READING_WARP_SIZE;
 
-            in_tail[tid].store(next_tail, simt::memory_order_release);
-            //used_bytes += 1;
-            used_bytes += sizeof(READ_T);
-          }
-          else {
-            goto r_decomp_read;
-          }
-       // }
-      __syncwarp(mask);
+            if (next_tail != in_head[tid].load(simt::memory_order_acquire)) {
+
+              input_buffer[cur_tail][tid] = temp_store;
+
+              in_tail[tid].store(next_tail, simt::memory_order_release);
+              used_bytes += sizeof(READ_T);
+            }
+            else {
+              goto r_decomp_read;
+            }
+        }
+
     }
-
   }
 
   else if (which == 1){
