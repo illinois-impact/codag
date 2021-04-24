@@ -5,6 +5,8 @@
 #include <string>
 #include <cudf_deflate.cuh>
 #include <common.h>
+#include <cerrno>
+#include <cstring>
 
 
 #include <fcntl.h>
@@ -60,11 +62,11 @@ void uncompress(const std::string& in_file, const std::string& out_file)
     //err = munmap(in_ptr, statbuf.st_size);
     size_t cur_off = 0;
     for (size_t i = 0; i < n_chunks; i++) {
-	   inf_args[i].srcDevice = d_in + cur_off;
+        inf_args[i].srcDevice = d_in + cur_off;
         cur_off += sz_arr[i];
         inf_args[i].srcSize = sz_arr[i];
         inf_args[i].dstDevice = d_out + (chunk_size * i);
-	inf_args[i].dstSize = chunk_size;
+        inf_args[i].dstSize = chunk_size;
     }
     err = munmap(in_ptr,statbuf.st_size);
     cudf::io::gpu_inflate_input_s * d_inf_args;
@@ -99,6 +101,7 @@ void uncompress(const std::string& in_file, const std::string& out_file)
     uint64_t * out_ptr = (uint64_t *) mmap(NULL, out_size, PROT_READ | PROT_WRITE, MAP_SHARED, out_fd, 0);
     if (out_ptr == MAP_FAILED) {
         std::cerr << "Couldn't mmap output file: " << out_file << std::endl;
+        std::cerr << std::strerror(errno) << std::endl;
         exit(3);
     }
 
