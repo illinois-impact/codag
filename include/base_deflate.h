@@ -50,6 +50,7 @@ void uncompress(const std::string& in_file, const std::string& out_file)
 
     size_t data_size = statbuf.st_size - (data_offset * sizeof(uint64_t));
 
+    printf("data size: %llu\n", data_size);
     cudf::io::gpu_inflate_input_s * inf_args = new cudf::io::gpu_inflate_input_s[n_chunks];
     //cudf::io::gpu_inflate_status_s * inf_stat = new cudf::io::gpu_inflate_status_s[n_chunks];
 
@@ -66,6 +67,7 @@ void uncompress(const std::string& in_file, const std::string& out_file)
     for (size_t i = 0; i < n_chunks; i++) {
         inf_args[i].srcDevice = d_in + cur_off;
         cur_off += sz_arr[i];
+	printf("sz arr: %llu\n", sz_arr[i]);
         inf_args[i].srcSize = sz_arr[i];
         inf_args[i].dstDevice = d_out + (chunk_size * i);
         inf_args[i].dstSize = chunk_size;
@@ -82,7 +84,8 @@ void uncompress(const std::string& in_file, const std::string& out_file)
 
     cuda_err_chk(gpuinflate(d_inf_args, d_inf_stat, n_chunks, 1));
     cuda_err_chk(cudaDeviceSynchronize());
-	
+
+
     std::chrono::high_resolution_clock::time_point kernel_end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> total = std::chrono::duration_cast<std::chrono::duration<double>>(kernel_end - kernel_start);
     std::cout << "kernel time: " << total.count() << " secs\n";
@@ -91,8 +94,13 @@ void uncompress(const std::string& in_file, const std::string& out_file)
     cudf::io::gpu_inflate_status_s * inf_stat = new cudf::io::gpu_inflate_status_s[n_chunks];
     cuda_err_chk(cudaMemcpy(inf_stat, d_inf_stat, sizeof(cudf::io::gpu_inflate_status_s) * n_chunks, cudaMemcpyDeviceToHost));
 
+    printf("status %u\n", inf_stat[0].status);
+
     out_size = (n_chunks - 1) * chunk_size;
     out_size += inf_stat[n_chunks - 1].bytes_written;
+
+
+    printf("out size: %llu\n", out_size);
 
     int out_fd = open(out_file.c_str(), O_RDWR | O_CREAT);
     if (out_fd < 0) {
