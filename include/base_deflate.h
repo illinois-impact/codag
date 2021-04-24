@@ -78,12 +78,8 @@ void uncompress(const std::string& in_file, const std::string& out_file)
     cuda_err_chk(cudaMemcpy(d_inf_args, inf_args, sizeof(cudf::io::gpu_inflate_input_s) * n_chunks, cudaMemcpyHostToDevice));
     cuda_err_chk(cudaMalloc(&d_inf_stat, sizeof(cudf::io::gpu_inflate_status_s) * n_chunks));
 
-    size_t out_size = 0;
-    cudf::io::gpu_inflate_status_s * inf_stat = new cudf::io::gpu_inflate_status_s[n_chunks];
-    cuda_err_chk(cudaMemcpy(inf_stat, d_inf_stat, sizeof(cudf::io::gpu_inflate_status_s) * n_chunks, cudaMemcpyDeviceToHost));
 
-    out_size = (n_chunks) * chunk_size;
-    out_size += inf_stat[n_chunks - 1].bytes_written;
+
 
     std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
 
@@ -93,6 +89,13 @@ void uncompress(const std::string& in_file, const std::string& out_file)
     std::chrono::high_resolution_clock::time_point kernel_end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> total = std::chrono::duration_cast<std::chrono::duration<double>>(kernel_end - kernel_start);
     std::cout << "kernel time: " << total.count() << " secs\n";
+
+    size_t out_size = 0;
+    cudf::io::gpu_inflate_status_s * inf_stat = new cudf::io::gpu_inflate_status_s[n_chunks];
+    cuda_err_chk(cudaMemcpy(inf_stat, d_inf_stat, sizeof(cudf::io::gpu_inflate_status_s) * n_chunks, cudaMemcpyDeviceToHost));
+
+    out_size = (n_chunks - 1) * chunk_size;
+    out_size += inf_stat[n_chunks - 1].bytes_written;
 
     int out_fd = open(out_file.c_str(), O_RDWR | O_CREAT);
     if (out_fd < 0) {
