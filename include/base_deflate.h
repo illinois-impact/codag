@@ -78,9 +78,6 @@ void uncompress(const std::string& in_file, const std::string& out_file)
     cuda_err_chk(cudaMemcpy(d_inf_args, inf_args, sizeof(cudf::io::gpu_inflate_input_s) * n_chunks, cudaMemcpyHostToDevice));
     cuda_err_chk(cudaMalloc(&d_inf_stat, sizeof(cudf::io::gpu_inflate_status_s) * n_chunks));
 
-
-
-
     std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
 
     cuda_err_chk(gpuinflate(d_inf_args, d_inf_stat, n_chunks, 1));
