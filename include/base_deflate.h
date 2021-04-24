@@ -39,7 +39,10 @@ void uncompress(const std::string& in_file, const std::string& out_file)
     size_t n_chunks = in_ptr[1];
     size_t data_offset = 2 + n_chunks;
 
+    printf("chunk size: %llu num chunks: %llu\n", chunk_size, n_chunks);
+
     uint64_t * sz_arr = in_ptr + 2;
+
 
     size_t data_size = statbuf.st_size - (data_offset * sizeof(uint64_t));
 
@@ -54,16 +57,16 @@ void uncompress(const std::string& in_file, const std::string& out_file)
 
     cuda_err_chk(cudaMemcpy(d_in, &in_ptr[data_offset], data_size, cudaMemcpyHostToDevice));
 
-    err = munmap(in_ptr, statbuf.st_size);
-
+    //err = munmap(in_ptr, statbuf.st_size);
     size_t cur_off = 0;
     for (size_t i = 0; i < n_chunks; i++) {
-        inf_args[i].srcDevice = d_in + cur_off;
+	   inf_args[i].srcDevice = d_in + cur_off;
         cur_off += sz_arr[i];
         inf_args[i].srcSize = sz_arr[i];
         inf_args[i].dstDevice = d_out + (chunk_size * i);
-        inf_args[i].dstSize = chunk_size;
+	inf_args[i].dstSize = chunk_size;
     }
+    err = munmap(in_ptr,statbuf.st_size);
     cudf::io::gpu_inflate_input_s * d_inf_args;
     cudf::io::gpu_inflate_status_s * d_inf_stat;
 
