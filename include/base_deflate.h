@@ -39,8 +39,8 @@ void uncompress(const std::string& in_file, const std::string& out_file)
     }
     close(in_fd);
 
-    size_t chunk_size = in_ptr[0];
-    size_t n_chunks = in_ptr[1];
+    uint64_t chunk_size = in_ptr[0];
+    uint64_t n_chunks = in_ptr[1];
     size_t data_offset = 2 + n_chunks;
 
     printf("chunk size: %llu num chunks: %llu\n", chunk_size, n_chunks);
