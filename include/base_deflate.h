@@ -8,6 +8,8 @@
 #include <cerrno>
 #include <cstring>
 
+#include <iostream>
+#include <chrono>
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -80,11 +82,17 @@ void uncompress(const std::string& in_file, const std::string& out_file)
     cudf::io::gpu_inflate_status_s * inf_stat = new cudf::io::gpu_inflate_status_s[n_chunks];
     cuda_err_chk(cudaMemcpy(inf_stat, d_inf_stat, sizeof(cudf::io::gpu_inflate_status_s) * n_chunks, cudaMemcpyDeviceToHost));
 
-    out_size = (n_chunks - 1) * chunk_size;
+    out_size = (n_chunks) * chunk_size;
     out_size += inf_stat[n_chunks - 1].bytes_written;
 
-    cuda_err_chk(gpuinflate(d_inf_args, d_inf_stat, n_chunks, 1));
+    std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
 
+    cuda_err_chk(gpuinflate(d_inf_args, d_inf_stat, n_chunks, 1));
+    cuda_err_chk(cudaDeviceSynchronize());
+	
+    std::chrono::high_resolution_clock::time_point kernel_end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> total = std::chrono::duration_cast<std::chrono::duration<double>>(kernel_end - kernel_start);
+    std::cout << "kernel time: " << total.count() << " secs\n";
 
     int out_fd = open(out_file.c_str(), O_RDWR | O_CREAT);
     if (out_fd < 0) {
