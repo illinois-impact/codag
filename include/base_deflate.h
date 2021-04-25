@@ -65,9 +65,8 @@ void uncompress(const std::string& in_file, const std::string& out_file)
     //err = munmap(in_ptr, statbuf.st_size);
     size_t cur_off = 0;
     for (size_t i = 0; i < n_chunks; i++) {
-        inf_args[i].srcDevice = d_in + cur_off;
+        inf_args[i].srcDevice = d_in + cur_off + 2;
         cur_off += sz_arr[i];
-	printf("sz arr: %llu\n", sz_arr[i]);
         inf_args[i].srcSize = sz_arr[i];
         inf_args[i].dstDevice = d_out + (chunk_size * i);
         inf_args[i].dstSize = chunk_size;
@@ -82,7 +81,7 @@ void uncompress(const std::string& in_file, const std::string& out_file)
 
     std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
 
-    cuda_err_chk(gpuinflate(d_inf_args, d_inf_stat, n_chunks, 1));
+    cuda_err_chk(gpuinflate(d_inf_args, d_inf_stat, n_chunks, 0));
     cuda_err_chk(cudaDeviceSynchronize());
 
 

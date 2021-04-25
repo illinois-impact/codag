@@ -266,19 +266,13 @@ def zlib_chunk_compress(data):
 
 
         chunk_size_array.append(cur_chunk_size)
-        chunk_data_array.append(list(zc))
+        chunk_data_array.append(zc)
 
     for chunk in range(n_chunks):
         if(chunk % 100 == 0):
             print("chunk: ", chunk)
         cur_chunk = chunk_data_array[chunk]
-      
-        for c in range(len(cur_chunk)):
-            b = cur_chunk[c]
-            b = b.to_bytes(1, byteorder='little')
-            output_f_test2.write(b)
-        #cur_chunk_b = bytes(cur_chunk)
-        #output_f_test2.write(cur_chunk_b)
+        output_f_test2.write(cur_chunk)
 
 
 
