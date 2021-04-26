@@ -67,7 +67,7 @@ void uncompress(const std::string& in_file, const std::string& out_file)
     for (size_t i = 0; i < n_chunks; i++) {
         inf_args[i].srcDevice = d_in + cur_off + 2;
         cur_off += sz_arr[i];
-        inf_args[i].srcSize = sz_arr[i];
+        inf_args[i].srcSize = sz_arr[i] - 2;
         inf_args[i].dstDevice = d_out + (chunk_size * i);
         inf_args[i].dstSize = chunk_size;
     }
