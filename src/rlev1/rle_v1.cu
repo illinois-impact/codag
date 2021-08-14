@@ -1,6 +1,6 @@
 #include <common.h>
 //#include <brle/brle_trans.h>
-#include <brle/rle_v1_writing_warp.h>
+#include <rle_v1/rlev1.h>
 #include <unistd.h>
 #include <iostream>
 #include <cstring>
@@ -30,6 +30,8 @@ int main(int argc, char** argv) {
 
     int input_bytes = std::atoi(s_input_bytes);
     int read_bytes = std::atoi(s_read_bytes);
+	
+    std::cout << "read bytes: " << read_bytes << std::endl;
 
     std::chrono::high_resolution_clock::time_point total_start = std::chrono::high_resolution_clock::now();
     int in_fd;
@@ -64,32 +66,33 @@ int main(int argc, char** argv) {
     std::chrono::high_resolution_clock::time_point compress_start = std::chrono::high_resolution_clock::now();
     if (!decomp) {
     	    if((input_bytes) == 1 && (read_bytes) == 1){
-	    	    brle_trans::compress_gpu<uint8_t, uint8_t>(in_, &out_, in_sb.st_size, &out_size);
-	        }
+			std::cout << "1 1\n";
+		    rle_v1::compress_gpu<uint8_t, uint8_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
+	      }
 
             else if((input_bytes) == 1 && (read_bytes) == 2){
-                brle_trans::compress_gpu<uint8_t, uint16_t>(in_, &out_, in_sb.st_size, &out_size);
+                rle_v1::compress_gpu<uint8_t, uint16_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
             }
 
             else if((input_bytes) == 1 && (read_bytes) == 4){
-                brle_trans::compress_gpu<uint8_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
+                rle_v1::compress_gpu<uint8_t, uint32_t,uint32_t>(in_, &out_, in_sb.st_size, &out_size);
             }
 
 
             else if((input_bytes) == 2 && (read_bytes) == 2){
-                brle_trans::compress_gpu<uint16_t, uint16_t>(in_, &out_, in_sb.st_size, &out_size);
+                rle_v1::compress_gpu<uint16_t, uint16_t,uint32_t>(in_, &out_, in_sb.st_size, &out_size);
             }
 
             else if((input_bytes) == 2 && (read_bytes) == 4){
-                brle_trans::compress_gpu<uint16_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
+                rle_v1::compress_gpu<uint16_t, uint32_t,uint32_t>(in_, &out_, in_sb.st_size, &out_size);
             }
 
             else if((input_bytes) == 4 && (read_bytes) == 4){
-                brle_trans::compress_gpu<uint32_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
+                rle_v1::compress_gpu<uint32_t, uint32_t,uint32_t>(in_, &out_, in_sb.st_size, &out_size);
             }
 	
 	    else if((input_bytes) == 8 && (read_bytes) == 8){
-                brle_trans::compress_gpu<uint64_t, uint64_t>(in_, &out_, in_sb.st_size, &out_size);
+                rle_v1::compress_gpu<uint64_t, uint64_t,uint32_t>(in_, &out_, in_sb.st_size, &out_size);
             }
 
             
@@ -99,35 +102,36 @@ int main(int argc, char** argv) {
 
         //brle_trans::compress_gpu<uint8_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
     }
+    
     else {
 
             if((input_bytes) == 1 && (read_bytes) == 1){
-                brle_trans::decompress_gpu<uint8_t, uint8_t>(in_, &out_, in_sb.st_size, &out_size);
+                rle_v1::decompress_gpu<uint8_t, uint8_t,uint32_t>(in_, &out_, in_sb.st_size, &out_size);
             }
 
             else if((input_bytes) == 1 && (read_bytes) == 2){
-                brle_trans::decompress_gpu<uint8_t, uint16_t>(in_, &out_, in_sb.st_size, &out_size);
+                 rle_v1::decompress_gpu<uint8_t, uint16_t,uint32_t>(in_, &out_, in_sb.st_size, &out_size);
             }
 
             else if((input_bytes) == 1 && (read_bytes) == 4){
-                brle_trans::decompress_gpu<uint8_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
+                rle_v1::decompress_gpu<uint8_t, uint32_t,uint32_t>(in_, &out_, in_sb.st_size, &out_size);
             }
 
 
             else if((input_bytes) == 2 && (read_bytes) == 2){
-                brle_trans::decompress_gpu<uint16_t, uint16_t>(in_, &out_, in_sb.st_size, &out_size);
+                rle_v1::decompress_gpu<uint16_t, uint16_t,uint32_t>(in_, &out_, in_sb.st_size, &out_size);
             }
 
             else if((input_bytes) == 2 && (read_bytes) == 4){
-                brle_trans::decompress_gpu<uint16_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
+                rle_v1::decompress_gpu<uint16_t, uint32_t,uint32_t>(in_, &out_, in_sb.st_size, &out_size);
             }
 
             else if((input_bytes) == 4 && (read_bytes) == 4){
-                brle_trans::decompress_gpu<uint32_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
+               rle_v1::decompress_gpu<uint32_t, uint32_t,uint32_t>(in_, &out_, in_sb.st_size, &out_size);
             }
             
 	    else if((input_bytes) == 8 && (read_bytes) == 8){
-                brle_trans::decompress_gpu<uint64_t, uint64_t>(in_, &out_, in_sb.st_size, &out_size);
+                rle_v1::decompress_gpu<uint64_t, uint64_t,uint32_t>(in_, &out_, in_sb.st_size, &out_size);
             }
 
 	    else {
@@ -138,6 +142,7 @@ int main(int argc, char** argv) {
         //brle_trans::decompress_gpu<uint8_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
     }
 
+    std::cout << "execution finished\n";
     std::chrono::high_resolution_clock::time_point compress_end = std::chrono::high_resolution_clock::now();
 
     fstat(out_fd, &out_sb);
