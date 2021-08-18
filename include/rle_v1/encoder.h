@@ -118,6 +118,13 @@ struct compress_output {
         if(write_flag){
             idx = offset + __popc(write_sync & (0xffffffff >> (32 - threadIdx.x)));
             out_ptr[idx] = data;
+
+            if(blockIdx.x == 0 && threadIdx.x == 21)
+                 printf("idx: %llu data: %lx\n",idx,  data);
+            // if(blockIdx.x == 0 && (idx * 4 == (6740))){
+            //     printf("tid: %i idx: %llu data:%i\n",threadIdx.x, idx, data);
+            // }
+            
             offset += __popc(write_sync);
         }
         return idx;
@@ -147,9 +154,11 @@ struct compress_output {
 
 
 
-template <typename READ_COL_TYPE, typename DATA_TYPE, size_t COMP_COL_LEN>
+
+
+template <typename READ_COL_TYPE, typename DATA_TYPE>
 __device__
-void compression_reader_warp(queue<DATA_TYPE>& rq, DATA_TYPE* input_data_ptr, uint64_t CHUNK_SIZE) {
+void compression_reader_warp(queue<DATA_TYPE>& rq, DATA_TYPE* input_data_ptr, uint64_t CHUNK_SIZE, int COMP_COL_LEN) {
 
     uint32_t num_iterations = (CHUNK_SIZE / 32 + COMP_COL_LEN - 1) / COMP_COL_LEN;
     uint32_t num_data_per_col = COMP_COL_LEN / sizeof(DATA_TYPE);
@@ -164,6 +173,8 @@ void compression_reader_warp(queue<DATA_TYPE>& rq, DATA_TYPE* input_data_ptr, ui
     }
     return;
 }
+
+
 
 
 template <typename DATA_TYPE>
@@ -219,7 +230,6 @@ __device__ void enqueue_header_holder(queue<write_queue_ele>& wq,  int8_t val){
 
 __device__ void enqueue_header_setting(queue<write_queue_ele>& wq,  int8_t val){
     write_queue_ele write_data;
-    if(threadIdx.x == 9 && blockIdx.x == 6) printf("set head: %x\n", val);
     write_data.done = false;
     write_data.header = 2;
     write_data.data = val;
@@ -228,9 +238,9 @@ __device__ void enqueue_header_setting(queue<write_queue_ele>& wq,  int8_t val){
 
 
 
-template <typename READ_COL_TYPE, typename DATA_TYPE, size_t COMP_COL_LEN, size_t in_buff_len = 4>
+template <typename READ_COL_TYPE, typename DATA_TYPE, size_t in_buff_len = 4>
 __device__
-void compression_init_warp(queue<DATA_TYPE>& rq, uint64_t* col_len_ptr, uint64_t* blk_offset_ptr, uint64_t CHUNK_SIZE) {
+void compression_init_warp(queue<DATA_TYPE>& rq, uint64_t* col_len_ptr, uint64_t* blk_offset_ptr, uint64_t CHUNK_SIZE, int COMP_COL_LEN) {
 
     uint32_t read_bytes = sizeof(DATA_TYPE);
 
@@ -574,10 +584,50 @@ void compression_init_warp(queue<DATA_TYPE>& rq, uint64_t* col_len_ptr, uint64_t
 }
 
 
+__device__ void write_byte_op(int8_t *out_buffer, uint64_t *out_bytes_ptr,uint8_t write_byte, uint64_t *out_offset_ptr,uint64_t *col_len, int COMP_WRITE_BYTES) {
 
-template <typename READ_COL_TYPE, typename DATA_TYPE, size_t COMP_COL_LEN, size_t in_buff_len = 4>
+  out_buffer[*out_offset_ptr] = write_byte;
+  (*out_bytes_ptr) = (*out_bytes_ptr) + 1;
+
+  // update the offset
+  uint64_t out_offset = (*out_offset_ptr);
+
+  if (( (*out_bytes_ptr) ) % (COMP_WRITE_BYTES) != 0) {
+    *out_offset_ptr = out_offset + 1;
+  }
+
+  else {
+
+    for(int i = 0; i < 32; i++){
+      if(col_len[i] > 0 && i != threadIdx.x){
+        out_offset += COMP_WRITE_BYTES;
+        col_len[i] -= COMP_WRITE_BYTES;
+      }
+    }
+    *out_offset_ptr = out_offset + 1;
+  }
+}
+
+template <typename INPUT_T>
+__device__ void write_varint_op(int8_t *out_buffer, uint64_t *out_bytes_ptr, INPUT_T val, uint64_t *out_offset_ptr,uint64_t *col_len, int COMP_WRITE_BYTES) {
+  INPUT_T write_val = val;
+  int8_t write_byte = 0;
+  do {
+    write_byte = write_val & 0x7F;
+    if ((write_val & (~0x7f)) != 0)
+      write_byte = write_byte | 0x80;
+
+    // write byte
+    write_byte_op(out_buffer, out_bytes_ptr, write_byte, out_offset_ptr,
+                  col_len, COMP_WRITE_BYTES);
+    write_val = write_val >> 7;
+  } while (write_val != 0);
+}
+
+
+template <typename READ_COL_TYPE, typename DATA_TYPE, typename DECOMP_TYPE, size_t in_buff_len = 4>
 __device__
-void compression_warp(queue<DATA_TYPE>& rq, queue<write_queue_ele>& wq, uint64_t* col_len_ptr, uint64_t* blk_offset_ptr, uint64_t CHUNK_SIZE) {
+void compression_warp( int8_t *out_buffer, queue<DATA_TYPE>& rq, queue<write_queue_ele>& wq, uint64_t* col_len_ptr, uint64_t* blk_offset_ptr, uint64_t CHUNK_SIZE, int COMP_COL_LEN) {
 
     uint32_t read_bytes = sizeof(DATA_TYPE);
 
@@ -597,7 +647,20 @@ void compression_warp(queue<DATA_TYPE>& rq, queue<write_queue_ele>& wq, uint64_t
     uint16_t lit_count = 0;
     DATA_TYPE prev_val = 0;
     
-    uint64_t out_offset = threadIdx.x * COMP_COL_LEN;
+    uint64_t out_offset = threadIdx.x * sizeof(DECOMP_TYPE);
+    int COMP_WRITE_BYTES = sizeof(DECOMP_TYPE);
+
+    uint64_t out_bytes = 0;
+    uint64_t out_start_idx = blk_offset_ptr[blockIdx.x];
+    int8_t *out_buffer_ptr = &(out_buffer[out_start_idx]);
+
+    uint64_t s_col_len[32];
+    for(int i = 0; i < 32; i++){
+      s_col_len[i] = ((col_len_ptr[blockIdx.x * 32 + i] + COMP_WRITE_BYTES - 1) / COMP_WRITE_BYTES) * COMP_WRITE_BYTES ;
+    }
+    for(int i = 0; i < threadIdx.x; i++){
+      s_col_len[i] -= COMP_WRITE_BYTES;
+    }
 
     //first data
     DATA_TYPE read_data = 0;
@@ -623,12 +686,17 @@ void compression_warp(queue<DATA_TYPE>& rq, queue<write_queue_ele>& wq, uint64_t
         delta_flag = false;
         lit_idx = out_offset;
 
-        enqueue_header_holder(wq, 1);
+        //enqueue_header_holder(wq, 1);
+
+        write_varint_op<DATA_TYPE>(out_buffer_ptr, &out_bytes, 1, &out_offset,
+                                   s_col_len, COMP_WRITE_BYTES);
 
         lit_count = 1;
 
         DATA_TYPE lit_val = data_buffer[0];
-        enqueue_varint<DATA_TYPE>(wq, lit_val);
+        //enqueue_varint<DATA_TYPE>(wq, lit_val);
+        write_varint_op<DATA_TYPE>(out_buffer_ptr,  &out_bytes, lit_val,
+                                   &out_offset, s_col_len, COMP_WRITE_BYTES);
 
         data_buffer_count--;
     }
@@ -671,13 +739,16 @@ void compression_warp(queue<DATA_TYPE>& rq, queue<write_queue_ele>& wq, uint64_t
                 delta_flag = false;
                 if (lit_count == 0) {
                     lit_idx = out_offset;
-                    enqueue_header_holder(wq, 1);
+                    //enqueue_header_holder(wq, 1);
+                    write_varint_op<DATA_TYPE>(out_buffer_ptr, &out_bytes, 1, &out_offset,
+                                   s_col_len, COMP_WRITE_BYTES);
                 }
 
                 int8_t data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
                 DATA_TYPE lit_val = data_buffer[data_buffer_tail];
-                enqueue_varint<DATA_TYPE>(wq, lit_val);
-
+                //enqueue_varint<DATA_TYPE>(wq, lit_val);
+                write_varint_op<DATA_TYPE>(out_buffer_ptr, &out_bytes, lit_val, &out_offset,
+                                   s_col_len, COMP_WRITE_BYTES);
                 lit_count++;
                 data_buffer_count--;
             } 
@@ -707,20 +778,28 @@ void compression_warp(queue<DATA_TYPE>& rq, queue<write_queue_ele>& wq, uint64_t
                 if(lit_count != 0){
                        // if(threadIdx.x == 9 && blockIdx.x == 6) printf("set head1:");
 
-                    enqueue_header_setting(wq, static_cast<int8_t>(-lit_count));
-                    //out_buffer_ptr[lit_idx] = static_cast<int8_t>(-lit_count);
+                    //enqueue_header_setting(wq, static_cast<int8_t>(-lit_count));
+                    out_buffer_ptr[lit_idx] = static_cast<int8_t>(-lit_count);
+                    
                     lit_count = 0;
                 }
             }
             //max
             else if(delta_count == 130){
                 int8_t write_byte = delta_count - 4;
-                enqueue_byte(wq, write_byte);
+                //enqueue_byte(wq, write_byte);
+                write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,
+                        s_col_len,COMP_WRITE_BYTES);
+                
                 write_byte = (uint8_t)cur_delta;
 
-                enqueue_byte(wq, write_byte);
-                enqueue_varint<DATA_TYPE>(wq, delta_first_val);
-
+                //enqueue_byte(wq, write_byte);
+                write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,
+                s_col_len,COMP_WRITE_BYTES);
+                //enqueue_varint<DATA_TYPE>(wq, delta_first_val);
+          
+                write_varint_op<DATA_TYPE>(out_buffer_ptr, &out_bytes, delta_first_val, 
+                                   &out_offset, s_col_len, COMP_WRITE_BYTES);
                 delta_count = 1;
                 data_buffer_count = 0;
                 lit_count = 0;
@@ -740,12 +819,18 @@ void compression_warp(queue<DATA_TYPE>& rq, queue<write_queue_ele>& wq, uint64_t
 
                 int8_t write_byte = delta_count - 3;
 
-                enqueue_byte(wq, write_byte);
-
+                //enqueue_byte(wq, write_byte);
+                write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,
+                    s_col_len,COMP_WRITE_BYTES);
+                
                 write_byte = (uint8_t)cur_delta;
 
-                enqueue_byte(wq, write_byte);
-                enqueue_varint<DATA_TYPE>(wq, delta_first_val);
+                //enqueue_byte(wq, write_byte);
+                                write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,
+                s_col_len,COMP_WRITE_BYTES);
+                //enqueue_varint<DATA_TYPE>(wq, delta_first_val);
+                write_varint_op<DATA_TYPE>(out_buffer_ptr, &out_bytes, delta_first_val, 
+                                   &out_offset, s_col_len, COMP_WRITE_BYTES);
                 
                 //if(threadIdx.x == 17 && blockIdx.x == 7 ) printf("write_byte: %x cur delta:%x  fv: %x\n", delta_count - 3, cur_delta, delta_first_val);
 
@@ -762,19 +847,23 @@ void compression_warp(queue<DATA_TYPE>& rq, queue<write_queue_ele>& wq, uint64_t
                 if(lit_count == 0){
                     lit_idx = out_offset;
                     //write_byte_op(out_buffer_ptr, &out_bytes, (uint8_t) 3,  &out_offset, s_col_len, &col_counter, COMP_WRITE_BYTES);
-                    enqueue_header_holder(wq, 1);
+                    //enqueue_header_holder(wq, 1);
+                    write_byte_op(out_buffer_ptr, &out_bytes, 3, &out_offset,
+                        s_col_len,COMP_WRITE_BYTES);
                 }
                 lit_count++;
                 DATA_TYPE lit_val = data_buffer[data_buffer_head];
 
                // write_varint(wq, lit_val);
-                enqueue_varint<DATA_TYPE>(wq, lit_val);
-
+                //enqueue_varint<DATA_TYPE>(wq, lit_val);
+                write_varint_op<DATA_TYPE>(out_buffer_ptr, &out_bytes, lit_val,
+                                   &out_offset, s_col_len, COMP_WRITE_BYTES);
                 if(lit_count == 127){
                     //out_buffer_ptr[lit_idx] = static_cast<int8_t>(-lit_count);
                                           //  if(threadIdx.x == 9 && blockIdx.x == 6) printf("set head2:");
 
-                    enqueue_header_setting(wq, static_cast<int8_t>(-lit_count));
+                    //enqueue_header_setting(wq, static_cast<int8_t>(-lit_count));
+                    out_buffer_ptr[lit_idx] = static_cast<int8_t>(-lit_count);
 
                     lit_count = 0;
                 }
@@ -785,17 +874,18 @@ void compression_warp(queue<DATA_TYPE>& rq, queue<write_queue_ele>& wq, uint64_t
 
                     if (lit_count == 0) {
                       lit_idx = out_offset;
-                      enqueue_header_holder(wq,1);
-                      // write_byte_op(out_buffer_ptr, &out_bytes, (uint8_t) 3,  &out_offset,
-                      //                          s_col_len, &col_counter, COMP_WRITE_BYTES);
+                      //enqueue_header_holder(wq,1);
+                       write_byte_op(out_buffer_ptr, &out_bytes, (uint8_t) 3,  &out_offset,
+                                                s_col_len, COMP_WRITE_BYTES);
                     }
 
                     delta_flag = false;
                     data_buffer_count = 0;
                     int8_t data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
                     DATA_TYPE lit_val = data_buffer[data_buffer_tail];
-                    enqueue_varint<DATA_TYPE>(wq, lit_val);
-
+                   // enqueue_varint<DATA_TYPE>(wq, lit_val);
+                    write_varint_op<DATA_TYPE>(out_buffer_ptr,  &out_bytes, lit_val,
+                                     &out_offset, s_col_len,  COMP_WRITE_BYTES);
                     lit_count++;
                     delta_count = 1;
                 }
@@ -818,11 +908,17 @@ void compression_warp(queue<DATA_TYPE>& rq, queue<write_queue_ele>& wq, uint64_t
 
     if (delta_count >= 3 && delta_flag) {
         int8_t write_byte = delta_count - 3;
-        enqueue_byte(wq, write_byte);
+        //enqueue_byte(wq, write_byte);
+        write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,  s_col_len,
+                    COMP_WRITE_BYTES);
 
         write_byte = (uint8_t)cur_delta;
-        enqueue_byte(wq, write_byte);
-        enqueue_varint<DATA_TYPE>(wq, delta_first_val);
+        //enqueue_byte(wq, write_byte);
+        write_byte_op(out_buffer_ptr, &out_bytes, write_byte, &out_offset,  s_col_len,
+                    COMP_WRITE_BYTES);
+        //enqueue_varint<DATA_TYPE>(wq, delta_first_val);
+            write_varint_op<DATA_TYPE>(out_buffer_ptr,  &out_bytes, delta_first_val,
+                               &out_offset, s_col_len,  COMP_WRITE_BYTES);
     }
 
     else {
@@ -831,63 +927,86 @@ void compression_warp(queue<DATA_TYPE>& rq, queue<write_queue_ele>& wq, uint64_t
 
       if(data_buffer_count == 1){
         if(lit_count == 127) {
-            enqueue_header_setting(wq, static_cast<int8_t>(-lit_count));
+           // enqueue_header_setting(wq, static_cast<int8_t>(-lit_count));
+                        out_buffer_ptr[lit_idx] = static_cast<int8_t>(-lit_count);
+
             lit_count = 0;
         }
 
         if(lit_count == 0){
-            enqueue_header_holder(wq, 1);
+            //enqueue_header_holder(wq, 1);
+            lit_idx = out_offset;
+            write_varint_op<DATA_TYPE>(out_buffer_ptr, &out_bytes, 1,  &out_offset,
+                                 s_col_len, COMP_WRITE_BYTES);
         }
 
         int8_t data_buffer_tail = (data_buffer_head == 0) ? 1 : 0;
         DATA_TYPE lit_val = data_buffer[data_buffer_tail];
-        enqueue_varint(wq, lit_val);
+        //enqueue_varint(wq, lit_val);
+                    write_varint_op<DATA_TYPE>(out_buffer_ptr, &out_bytes, lit_val,  &out_offset,
+                                 s_col_len, COMP_WRITE_BYTES);
         lit_count++;
       }
 
       if (data_buffer_count == 2) {
         if(lit_count == 127) {
-            enqueue_header_setting(wq, (-lit_count));
+            //enqueue_header_setting(wq, (-lit_count));
+                                    out_buffer_ptr[lit_idx] = static_cast<int8_t>(-lit_count);
+
             lit_count = 0;
         }
 
         if(lit_count == 0){
-            enqueue_header_holder(wq, 1);
+            //enqueue_header_holder(wq, 1);
+            lit_idx = out_offset;
+                    write_byte_op(out_buffer_ptr, &out_bytes, 1, &out_offset,  s_col_len,
+                    COMP_WRITE_BYTES);
         }
 
 
         DATA_TYPE lit_val = data_buffer[data_buffer_head];
-        enqueue_varint<DATA_TYPE>(wq, lit_val);
+       // enqueue_varint<DATA_TYPE>(wq, lit_val);
+               write_varint_op<DATA_TYPE>(out_buffer_ptr, &out_bytes, lit_val,  &out_offset,
+                                 s_col_len, COMP_WRITE_BYTES);
 
         lit_count++;
 
         if(lit_count == 127) {
-            enqueue_header_setting(wq, static_cast<int8_t>(-lit_count));
+            //enqueue_header_setting(wq, static_cast<int8_t>(-lit_count));
+                        out_buffer_ptr[lit_idx] = static_cast<int8_t>(-lit_count);
+
             lit_count = 0;
         }
 
         if(lit_count == 0){
-            enqueue_header_holder(wq, 1);
+           // enqueue_header_holder(wq, 1);
+            lit_idx  = out_offset;
+                         write_byte_op(out_buffer_ptr, &out_bytes, 1, &out_offset,  s_col_len,
+                    COMP_WRITE_BYTES);
         }
 
 
         data_buffer_head = (data_buffer_head + 1) % 2;
         lit_val = data_buffer[data_buffer_head];
-        enqueue_varint<DATA_TYPE>(wq, lit_val);
+        //enqueue_varint<DATA_TYPE>(wq, lit_val);
+           write_varint_op<DATA_TYPE>(out_buffer_ptr, &out_bytes, lit_val,  &out_offset,
+                                 s_col_len, COMP_WRITE_BYTES);
 
         lit_count++;
       }
                             //  if(threadIdx.x == 9 && blockIdx.x == 6) printf("set head3:");
 
-      enqueue_header_setting(wq, static_cast<int8_t>(-lit_count));
+      //enqueue_header_setting(wq, static_cast<int8_t>(-lit_count));
+          out_buffer_ptr[lit_idx] = (-lit_count);
+
     }
 
 
-    write_queue_ele done_data;
-    done_data.data = 0;
+    // write_queue_ele done_data;
+    // done_data.data = 0;
 
-    done_data.done = true;
-    wq.enqueue(&done_data);
+    // done_data.done = true;
+    // wq.enqueue(&done_data);
 
 }
 
@@ -906,6 +1025,7 @@ void compression_writer_warp(queue<write_queue_ele>& wq, compress_output< DECOMP
     bool header_flag = false;
     int header_word_idx = 0;
     uint64_t iter = 0;
+
 
      while(!done){
         out_data = 0;
@@ -926,7 +1046,6 @@ void compression_writer_warp(queue<write_queue_ele>& wq, compress_output< DECOMP
 
 
                 else{
-                    if(threadIdx.x == 0 && blockIdx.x == 91613 ) printf("header: %i\n", deq_data.header);
 
                     if(deq_data.header == 1){
                         //header_offset =  out.get_offset();
@@ -940,14 +1059,12 @@ void compression_writer_warp(queue<write_queue_ele>& wq, compress_output< DECOMP
                        // if(header_word_idx == 0) printf("tid: %i bid: %i head: %x\n",threadIdx.x, blockIdx.x,  deq_data.data);
 
                         if(iter == header_word_idx){
-                            if(threadIdx.x == 0 && blockIdx.x == 91613 ) printf("header update: %i\n", (deq_data.data & 0x00FF));
 
                             DECOMP_COL_TYPE cur_data = (deq_data.data & 0x00FF);
                             out_data = out_data | (cur_data << (offset_in_word * 8));
 
                         }
                         else{
-                            if(threadIdx.x == 0 && blockIdx.x == 91613 ) printf("header update: %i\n", (deq_data.data & 0x00FF));
 
                             out.update_header(header_offset, offset_in_word, (uint8_t) (deq_data.data & 0x00FF));
                             header_flag = false;
@@ -985,9 +1102,12 @@ void compression_writer_warp(queue<write_queue_ele>& wq, compress_output< DECOMP
 
 
 
-template <typename READ_COL_TYPE, typename DATA_TYPE, typename OUT_COL_TYPE, uint16_t in_queue_size = 4, size_t COMP_COL_LEN>
+
+
+
+template <typename READ_COL_TYPE, typename DATA_TYPE, typename OUT_COL_TYPE, uint16_t in_queue_size = 4>
 __global__ void 
-setup_deflate(uint8_t* input_ptr,  uint64_t*  col_len_ptr, uint64_t*  blk_offset_ptr, uint64_t CHUNK_SIZE){
+setup_deflate(uint8_t* input_ptr,  uint64_t*  col_len_ptr, uint64_t*  blk_offset_ptr, uint64_t CHUNK_SIZE, int COMP_COL_LEN){
 
     static __shared__ DATA_TYPE in_queue_[32][in_queue_size];
     static __shared__ simt::atomic<uint8_t,simt::thread_scope_block> h[32];
@@ -1003,21 +1123,21 @@ setup_deflate(uint8_t* input_ptr,  uint64_t*  col_len_ptr, uint64_t*  blk_offset
     if (threadIdx.y == 0) {
         queue<DATA_TYPE> in_queue(in_queue_[threadIdx.x], h + threadIdx.x , t + threadIdx.x, in_queue_size);
         uint8_t* chunk_ptr = (input_ptr +  (CHUNK_SIZE * blockIdx.x));
-        compression_reader_warp<READ_COL_TYPE, DATA_TYPE, COMP_COL_LEN > (in_queue, (DATA_TYPE*) chunk_ptr, CHUNK_SIZE);
+        compression_reader_warp<READ_COL_TYPE, DATA_TYPE > (in_queue, (DATA_TYPE*) chunk_ptr, CHUNK_SIZE, COMP_COL_LEN);
     }
 
     else if (threadIdx.y == 1) {
         queue<DATA_TYPE> in_queue(in_queue_[threadIdx.x], h + threadIdx.x, t + threadIdx.x, in_queue_size);
-        compression_init_warp<READ_COL_TYPE, DATA_TYPE, COMP_COL_LEN, in_queue_size >(in_queue, col_len_ptr, blk_offset_ptr, CHUNK_SIZE);
+        compression_init_warp<READ_COL_TYPE, DATA_TYPE, in_queue_size >(in_queue, col_len_ptr, blk_offset_ptr, CHUNK_SIZE, COMP_COL_LEN);
     }
 
 
 }
 
 
-template <typename READ_COL_TYPE, typename DATA_TYPE, typename OUT_COL_TYPE, uint16_t queue_size = 4, size_t COMP_COL_LEN>
+template <typename READ_COL_TYPE, typename DATA_TYPE, typename OUT_COL_TYPE, uint16_t queue_size = 4>
 __global__ void 
-deflate(uint8_t* input_ptr,  uint8_t* out,  uint64_t*  col_len_ptr, uint64_t*  blk_offset_ptr, uint64_t CHUNK_SIZE){
+deflate(uint8_t* input_ptr,  uint8_t* out,  uint64_t*  col_len_ptr, uint64_t*  blk_offset_ptr, uint64_t CHUNK_SIZE, int COMP_COL_LEN){
 
     static __shared__ DATA_TYPE in_queue_[32][queue_size];
     static __shared__ simt::atomic<uint8_t,simt::thread_scope_block> h[32];
@@ -1037,21 +1157,21 @@ deflate(uint8_t* input_ptr,  uint8_t* out,  uint64_t*  col_len_ptr, uint64_t*  b
     if (threadIdx.y == 0) {
         queue<DATA_TYPE> in_queue(in_queue_[threadIdx.x], h + threadIdx.x , t + threadIdx.x, queue_size);
         uint8_t* chunk_ptr = (input_ptr +  (CHUNK_SIZE * blockIdx.x));
-        compression_reader_warp<READ_COL_TYPE, DATA_TYPE, COMP_COL_LEN > (in_queue, (DATA_TYPE*) chunk_ptr, CHUNK_SIZE);
+        compression_reader_warp<READ_COL_TYPE, DATA_TYPE > (in_queue, (DATA_TYPE*) chunk_ptr, CHUNK_SIZE, COMP_COL_LEN);
     }
 
     else if (threadIdx.y == 1) {
         queue<DATA_TYPE> in_queue(in_queue_[threadIdx.x], h + threadIdx.x, t + threadIdx.x, queue_size);
         queue<write_queue_ele> out_queue(out_queue_[threadIdx.x], out_h + threadIdx.x, out_t + threadIdx.x, queue_size);
-        compression_warp<READ_COL_TYPE, DATA_TYPE, COMP_COL_LEN, queue_size >(in_queue, out_queue, col_len_ptr, blk_offset_ptr, CHUNK_SIZE);
+        compression_warp<READ_COL_TYPE, DATA_TYPE, OUT_COL_TYPE, queue_size >((int8_t*)out, in_queue, out_queue, col_len_ptr, blk_offset_ptr, CHUNK_SIZE, COMP_COL_LEN);
     }
-        else{
-        queue<write_queue_ele> out_queue(out_queue_[threadIdx.x], out_h + threadIdx.x, out_t + threadIdx.x, queue_size);
-        //compress_output<OUT_COL_TYPE> d((out + CHUNK_SIZE * blockIdx.x));
-        compress_output<OUT_COL_TYPE> d((out + blk_offset_ptr[blockIdx.x]));
+    //     else{
+    //     queue<write_queue_ele> out_queue(out_queue_[threadIdx.x], out_h + threadIdx.x, out_t + threadIdx.x, queue_size);
+    //     //compress_output<OUT_COL_TYPE> d((out + CHUNK_SIZE * blockIdx.x));
+    //     compress_output<OUT_COL_TYPE> d((out + blk_offset_ptr[blockIdx.x]));
     
-        compression_writer_warp<OUT_COL_TYPE, DATA_TYPE>(out_queue, d, CHUNK_SIZE);
-    }
+    //     compression_writer_warp<OUT_COL_TYPE, DATA_TYPE>(out_queue, d, CHUNK_SIZE);
+    // }
 
     __syncthreads();
 }

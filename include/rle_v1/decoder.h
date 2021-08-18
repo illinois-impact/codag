@@ -235,7 +235,7 @@ struct input_stream {
 };
 
 
-template <typename DATA_TYPE, size_t COMP_COL_LEN >
+template <typename DATA_TYPE>
 struct decompress_output {
 
     DATA_TYPE* out_ptr;
@@ -270,13 +270,12 @@ void reader_warp(decompress_input< COMP_COL_TYPE>& in, queue<COMP_COL_TYPE>& rq)
             //comp_enqueue<COMP_COL_TYPE, READ_COL_TYPE>(&v, &rq);
         }
     }
-
 }
 
-template <typename COMP_COL_TYPE, typename DATA_TYPE, size_t in_buff_len = 4,  size_t COMP_COL_LEN>
+template <typename COMP_COL_TYPE, typename DATA_TYPE, size_t in_buff_len = 4>
 //__forceinline__ 
 __device__
-void decoder_warp(input_stream<COMP_COL_TYPE, in_buff_len>& s, queue<decomp_write_queue_ele<DATA_TYPE>>& mq,  decompress_output<DATA_TYPE, COMP_COL_LEN>& out, uint64_t CHUNK_SIZE, DATA_TYPE* out_buf) {
+void decoder_warp(input_stream<COMP_COL_TYPE, in_buff_len>& s, queue<decomp_write_queue_ele<DATA_TYPE>>& mq,  decompress_output<DATA_TYPE>& out, uint64_t CHUNK_SIZE, DATA_TYPE* out_buf, int COMP_COL_LEN) {
 
     int test_idx = 40;
 
@@ -317,16 +316,11 @@ void decoder_warp(input_stream<COMP_COL_TYPE, in_buff_len>& s, queue<decomp_writ
                 int8_t in_data = 0;
                 in_data = (int8_t) (in_data | (temp_byte & 0x00FF));
 
-                //if((in_data >> 7) == 0){
                 if(in_data >= 0){
-                                       //if(threadIdx.x == test_idx && blockIdx.x == 0) printf("positive data:%i\n", in_data);
-
                     value |= (static_cast<DATA_TYPE>(in_data) << offset);
                     read_next = false;
                 }
                 else{
-                  //  if(threadIdx.x == test_idx && blockIdx.x == 0) printf("negative\n");
-
                     value |= ((static_cast<DATA_TYPE>(in_data) & 0x7f) << offset); 
                     offset += 7;
                 }
@@ -404,14 +398,13 @@ void decoder_warp(input_stream<COMP_COL_TYPE, in_buff_len>& s, queue<decomp_writ
                 out_buf[out_offset] =  static_cast<DATA_TYPE>(out_ele);
                 c++;
                  if(c == words_in_line){
-                        out_offset += words_in_line * 31;
-                        c=0;
-                    }
+                    out_offset += words_in_line * 31;
+                    c=0;
+                }
                     
                         out_offset++;
                                  
                 //mq.enqueue(&qe);
-                //if(threadIdx.x == 0 && blockIdx.x == 0 && input_data_out_size <= 20) printf("out: %c\n", out_ele);
 
                  input_data_out_size+=sizeof(DATA_TYPE);
 
@@ -430,11 +423,11 @@ void decoder_warp(input_stream<COMP_COL_TYPE, in_buff_len>& s, queue<decomp_writ
 }
 
 
-template <typename COMP_COL_TYPE, typename DATA_TYPE, typename OUT_COL_TYPE, uint16_t queue_size = 4,  size_t COMP_COL_LEN>
+template <typename COMP_COL_TYPE, typename DATA_TYPE, typename OUT_COL_TYPE, uint16_t queue_size = 4>
 __global__ void 
 //__launch_bounds__ (96, 13)
 //__launch_bounds__ (128, 11)
-inflate(uint8_t* comp_ptr, uint8_t* out, const uint64_t* const col_len_ptr, const uint64_t* const blk_offset_ptr, uint64_t CHUNK_SIZE) {
+inflate(uint8_t* comp_ptr, uint8_t* out, const uint64_t* const col_len_ptr, const uint64_t* const blk_offset_ptr, uint64_t CHUNK_SIZE, int COMP_COL_LEN) {
 
     __shared__ COMP_COL_TYPE in_queue_[32][queue_size];
     __shared__ simt::atomic<uint8_t,simt::thread_scope_block> h[32];
@@ -469,8 +462,8 @@ inflate(uint8_t* comp_ptr, uint8_t* out, const uint64_t* const col_len_ptr, cons
         queue<COMP_COL_TYPE> in_queue(in_queue_[threadIdx.x], h + threadIdx.x, t + threadIdx.x, queue_size);
         queue<decomp_write_queue_ele<DATA_TYPE>> out_queue(out_queue_[threadIdx.x], out_h + threadIdx.x, out_t + threadIdx.x, queue_size);
         input_stream<COMP_COL_TYPE, 8> s(&in_queue, (uint32_t)col_len, local_queue[threadIdx.x]);
-        decompress_output<DATA_TYPE, COMP_COL_LEN> d((out + CHUNK_SIZE * (blockIdx.x )));
-        decoder_warp<COMP_COL_TYPE, DATA_TYPE, 8, COMP_COL_LEN>(s, out_queue, d, CHUNK_SIZE, (DATA_TYPE*)(out + CHUNK_SIZE * blockIdx.x));
+        decompress_output<DATA_TYPE> d((out + CHUNK_SIZE * (blockIdx.x )));
+        decoder_warp<COMP_COL_TYPE, DATA_TYPE, 8>(s, out_queue, d, CHUNK_SIZE, (DATA_TYPE*)(out + CHUNK_SIZE * blockIdx.x), COMP_COL_LEN);
 
     }
 
