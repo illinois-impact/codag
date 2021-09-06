@@ -8,28 +8,7 @@
 #include <simt/atomic>
 #include <iostream>
 
-
-#define BUFF_LEN 2
-
-#define UNCOMP 0
-#define STATIC 1
-#define DYNAMIC 2
 #define FULL_MASK 0xFFFFFFFF
-
-#define MASK_4_1  0x000000FF
-#define MASK_4_2  0x0000FF00
-#define MASK_4_3  0x00FF0000
-#define MASK_4_4  0xFF000000
-
-#define MASK_8_1  0x0000000F
-#define MASK_8_2  0x000000F0
-#define MASK_8_3  0x00000F00
-#define MASK_8_4  0x0000F000
-#define MASK_8_5  0x000F0000
-#define MASK_8_6  0x00F00000
-#define MASK_8_7  0x0F000000
-#define MASK_8_8  0xF0000000
-
 
 
 struct  write_queue_ele{
@@ -63,7 +42,7 @@ struct queue {
         const auto next_tail = (cur_tail + 1) % len;
 
         while (next_tail == head->load(simt::memory_order_acquire))
-            __nanosleep(50);
+            __nanosleep(100);
 
 
         queue_[cur_tail] = *v;
@@ -77,7 +56,7 @@ struct queue {
 
         const auto cur_head = head->load(simt::memory_order_relaxed);
         while (cur_head == tail->load(simt::memory_order_acquire))
-            __nanosleep(50);
+            __nanosleep(100);
 
         *v = queue_[cur_head];
 
@@ -119,8 +98,7 @@ struct compress_output {
             idx = offset + __popc(write_sync & (0xffffffff >> (32 - threadIdx.x)));
             out_ptr[idx] = data;
 
-            if(blockIdx.x == 0 && threadIdx.x == 21)
-                 printf("idx: %llu data: %lx\n",idx,  data);
+         
             // if(blockIdx.x == 0 && (idx * 4 == (6740))){
             //     printf("tid: %i idx: %llu data:%i\n",threadIdx.x, idx, data);
             // }
@@ -263,6 +241,8 @@ void compression_init_warp(queue<DATA_TYPE>& rq, uint64_t* col_len_ptr, uint64_t
     uint64_t out_offset = threadIdx.x * COMP_COL_LEN;
     uint64_t out_len = 0;
 
+    bool reset_flag = false;
+
     //first data
     DATA_TYPE read_data = 0;
     rq.dequeue(&read_data);
@@ -319,17 +299,16 @@ void compression_init_warp(queue<DATA_TYPE>& rq, uint64_t* col_len_ptr, uint64_t
        // if(threadIdx.x == 24 && blockIdx.x == 93064 ) printf("out len: %llu\n", out_len);
 
         if(lit_count == 127){
-            //out_buffer_ptr[lit_idx] = static_cast<int8_t>(-lit_count);
-            //enqueue_header_setting(wq, static_cast<int8_t>(-lit_count) );
             lit_count = 0;
+            // reset_flag = true;
+            // delta_count = 1;
         }
 
         rq.dequeue(&read_data);
-                                //    if(threadIdx.x == 9 && blockIdx.x == 6) printf("readdata: %x\n", read_data);
-
-
         used_bytes += read_bytes;
         
+
+
         if(delta_count == 1){
 
             temp_diff = read_data - prev_val;
@@ -548,7 +527,7 @@ void compression_init_warp(queue<DATA_TYPE>& rq, uint64_t* col_len_ptr, uint64_t
         data_buffer_head = (data_buffer_head + 1) % 2;
         lit_val = data_buffer[data_buffer_head];
         //enqueue_varint(wq, lit_val);
-                                    out_len += get_varint_size<DATA_TYPE>( lit_val);
+        out_len += get_varint_size<DATA_TYPE>( lit_val);
                                   //  if(threadIdx.x == 24 && blockIdx.x == 93064 ) printf("out len6: %llu\n", out_len);
 
         lit_count++;
@@ -575,8 +554,6 @@ void compression_init_warp(queue<DATA_TYPE>& rq, uint64_t* col_len_ptr, uint64_t
     __syncwarp();
     if(threadIdx.x == 0){
         out_len = ((out_len + 128 - 1) / 128) * 128;
-
-        if(blockIdx.x == 643) printf("col len: %llu\n", out_len);
         
         blk_offset_ptr[blockIdx.x + 1] = out_len;        
     }
@@ -585,6 +562,8 @@ void compression_init_warp(queue<DATA_TYPE>& rq, uint64_t* col_len_ptr, uint64_t
 
 
 __device__ void write_byte_op(int8_t *out_buffer, uint64_t *out_bytes_ptr,uint8_t write_byte, uint64_t *out_offset_ptr,uint64_t *col_len, int COMP_WRITE_BYTES) {
+
+
 
   out_buffer[*out_offset_ptr] = write_byte;
   (*out_bytes_ptr) = (*out_bytes_ptr) + 1;
@@ -654,6 +633,8 @@ void compression_warp( int8_t *out_buffer, queue<DATA_TYPE>& rq, queue<write_que
     uint64_t out_start_idx = blk_offset_ptr[blockIdx.x];
     int8_t *out_buffer_ptr = &(out_buffer[out_start_idx]);
 
+    bool reset_flag = false;
+
     uint64_t s_col_len[32];
     for(int i = 0; i < 32; i++){
       s_col_len[i] = ((col_len_ptr[blockIdx.x * 32 + i] + COMP_WRITE_BYTES - 1) / COMP_WRITE_BYTES) * COMP_WRITE_BYTES ;
@@ -722,16 +703,42 @@ void compression_warp( int8_t *out_buffer, queue<DATA_TYPE>& rq, queue<write_que
 
         if(lit_count == 127){
             //out_buffer_ptr[lit_idx] = static_cast<int8_t>(-lit_count);
-            enqueue_header_setting(wq, static_cast<int8_t>(-lit_count) );
+         //   enqueue_header_setting(wq, static_cast<int8_t>(-lit_count) );
+            out_buffer_ptr[lit_idx] = static_cast<int8_t>(-lit_count);
+
+            //printf("ub: %llu\n", used_bytes);
             lit_count = 0;
+            // reset_flag = true;
+            // delta_count = 1;
         }
 
         rq.dequeue(&read_data);
                                 //    if(threadIdx.x == 9 && blockIdx.x == 6) printf("readdata: %x\n", read_data);
 
+        // if(threadIdx.x == 11 && blockIdx.x == 0){
+        //     printf("data: %x\n", read_data);
+       // }
+
+        // uint64_t test_off = (used_bytes / COMP_COL_LEN) * (COMP_COL_LEN * 32) + threadIdx.x * COMP_COL_LEN + blockIdx.x * CHUNK_SIZE + (used_bytes % COMP_COL_LEN);
+        
+        // if(test_off >= 72351570  &&  test_off <= 72351597 ){
+        //     printf("bid: %i tid:%i offset: %llu read data: %x\n", blockIdx.x, test_off, read_data);
+        // }
 
         used_bytes += read_bytes;
-        
+
+
+        //   if(reset_flag){
+        //     prev_val = read_data;
+        //     data_buffer[data_buffer_head] = read_data;
+        //     data_buffer_head = (data_buffer_head + 1) % 2;
+        //     data_buffer_count++;
+
+        //     reset_flag = false;
+        //     continue;
+        // }
+
+
         if(delta_count == 1){
 
             temp_diff = read_data - prev_val;
@@ -1182,9 +1189,6 @@ __global__ void reduction_scan(uint64_t *blk_offset, uint64_t n) {
   blk_offset[0] = 0;
   for (int i = 1; i <= n; i++) {
     blk_offset[i] += blk_offset[i - 1];
-        if(i-1 == 643)
-            printf("blk offset: %llu\n", blk_offset[i-1]);
-
   }
 }
 

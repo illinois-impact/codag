@@ -1,17 +1,15 @@
 #ifndef _RLEV2_UTIL_H_
 #define _RLEV2_UTIL_H_
 
-//#define READ_TYPE int64_t
+#define READ_TYPE int64_t
 
-typedef int8_t INPUT_T;
-typedef uint8_t UINPUT_T;
-typedef int32_t VEC_T;
+typedef longlong2 VEC_T;
 
-//typedef std::conditional<sizeof(READ_TYPE) == sizeof(int32_t), int32_t, int64_t>::type INPUT_T;
-//typedef std::conditional<sizeof(READ_TYPE) == sizeof(int32_t), uint32_t, uint64_t>::type UINPUT_T;
+typedef std::conditional<sizeof(READ_TYPE) == sizeof(int32_t), uint32_t, uint64_t>::type INPUT_T;
+typedef std::conditional<sizeof(READ_TYPE) == sizeof(int32_t), uint32_t, uint64_t>::type UINPUT_T;
 //typedef std::conditional<sizeof(READ_TYPE) == sizeof(int32_t), longlong2, longlong4>::type VEC_T;
 
-#define ERR_THREAD 16
+#define ERR_THREAD 0
 #define ERR_CHUNK 0
 
 // #define DEBUG
@@ -61,7 +59,7 @@ constexpr uint8_t __CLOSEST_ALIGNED_FIXED_BIT_MAP[65] = {
 }; 
 
 constexpr   uint16_t BLK_SIZE_()                { return (32); }
-constexpr   uint64_t CHUNK_SIZE_()              { return (1024 * 8); }
+constexpr   uint64_t CHUNK_SIZE_()              { return (1024 * 8 * 5); }
 constexpr   uint32_t INPUT_BUFFER_SIZE()        { return (32); }
 constexpr   uint16_t MAX_LITERAL_SIZE_()        { return 128; }
 constexpr   uint8_t  MINIMUM_REPEAT_()          { return 3; }
@@ -73,12 +71,12 @@ constexpr   uint8_t  HIST_LEN_()                { return 32; }
 
 #define WARP_SIZE                                       32
 #define BLK_SIZE                               BLK_SIZE_()			  
-#define CHUNK_SIZE                           CHUNK_SIZE_()
+//#define CHUNK_SIZE                           CHUNK_SIZE_()
 #define INPUT_BUFFER_SIZE              INPUT_BUFFER_SIZE()
 #define MAX_LITERAL_SIZE               MAX_LITERAL_SIZE_()
 #define MINIMUM_REPEAT                   MINIMUM_REPEAT_()
 #define MAXIMUM_REPEAT                   MAXIMUM_REPEAT_()
-#define OUTPUT_CHUNK_SIZE             OUTPUT_CHUNK_SIZE_() // TODO: this is probably not a tight bound.
+//#define OUTPUT_CHUNK_SIZE             OUTPUT_CHUNK_SIZE_() // TODO: this is probably not a tight bound.
 #define MAX_SHORT_REPEAT_LENGTH MAX_SHORT_REPEAT_LENGTH_()
 #define HIST_LEN                               HIST_LEN_()
 

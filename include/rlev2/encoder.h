@@ -57,10 +57,10 @@ namespace rlev2 {
     bool is_safe_subtract(const INPUT_T& larger, const INPUT_T& smaller) {
         // Original implementation causes overflow already while checking safety.
         if (smaller > 0) return true;
-        return (larger > smaller - INT64_MIN);
+        return (larger > smaller - INT8_MIN);
     }
 
-    __host__ __device__ void block_encode(const uint64_t, INPUT_T*, const uint64_t, uint8_t*, uint64_t*);
+    __host__ __device__ void block_encode(const uint64_t, INPUT_T*, const uint64_t, uint8_t*, uint64_t*, uint64_t);
     __host__ __device__ void writeDirectValues(encode_info<>&);
     __host__ __device__ void writeDeltaValues(encode_info<>&);
     __host__ __device__ void writeShortRepeatValues(encode_info<>&);
@@ -125,7 +125,7 @@ namespace rlev2 {
         uint8_t current = 0;
         for(uint32_t i=0; i <len; i++) {
             INPUT_T value = in[i];
-            // printf("pb write val: %ld\n", value);
+	    // printf("pb write val: %ld\n", value);
             uint32_t bitsToWrite = bits;
 
             while (bitsToWrite > bitsLeft) {
@@ -182,9 +182,10 @@ namespace rlev2 {
     __host__ __device__
     void preparePatchedBlob1(encode_info<>& info, patch_blob& pb) {
         // mask will be max value beyond which patch will be generated
-        INPUT_T mask = static_cast<INPUT_T>(static_cast<UINPUT_T>(1) << pb.bits95p) - 1;
-        // printf("<<<<<<<<<<<<<=== pb95p %u\n", pb.bits95p);
+        int64_t mask = static_cast<int64_t>(static_cast<uint64_t>(1) << pb.bits95p) - 1;
+        // printf("<<<<<<<<<<<<<=== pb95p %u\n", pb.bits95p);i
         pb.patch_len = ceil(info.num_literals, static_cast<uint32_t>(20));
+
         pb.patch_width = get_closest_bit(pb.bits100p - pb.bits95p);
 
 
@@ -203,7 +204,8 @@ namespace rlev2 {
 
         for(size_t i = 0; i < info.num_literals; i++) {
             // if value is above mask then create the patch and record the gap
-            if (pb.reduced_literals[i] > mask) {
+
+	    if (pb.reduced_literals[i] > mask) {
                 size_t gap = i - prev;
                 if (gap > maxGap) {
                     maxGap = gap;
@@ -220,7 +222,8 @@ namespace rlev2 {
                 // strip off the MSB to enable safe bit packing
                 // info.literals[i] &= mask;
                 pb.reduced_literals[i] &= mask;
-            }
+
+	    }
         }
 
         // adjust the patch length to number of entries in gap list
@@ -295,18 +298,16 @@ namespace rlev2 {
             isDecreasing &= (l0 >= l1);
 
             info.is_fixed_delta &= (currDelta == initialDelta);
-            if(i > 1){
-	    deltas[i - 1] = abs(currDelta);
+            deltas[i - 1] = (currDelta);
             max_delta = max(max_delta, deltas[i - 1]);
-        	}
-	 }
+        }
         deltas[0] = literals[1] - literals[0]; // Initial
 
         // it's faster to exit under delta overflow condition without checking for
         // PATCHED_BASE condition as encoding using DIRECT is faster and has less
         // overhead than PATCHED_BASE
         if (!is_safe_subtract(literal_max, literal_min)) {
-            writeDirectValues(info);
+	    writeDirectValues(info);
             return;
         }
 
@@ -330,7 +331,8 @@ if (info.cid == ERR_CHUNK && info.tid == ERR_THREAD) {
 	printf("thread %u case write delta case 1\n", info.tid);
 }
 #endif
-                writeDeltaValues(info);
+
+	writeDeltaValues(info);
                 return;
             }
         }
@@ -345,11 +347,10 @@ if (info.cid == ERR_CHUNK && info.tid == ERR_THREAD) {
 
         // if the difference between 90th percentile and 100th percentile fixed
         // bits is > 1 then we need patch the values
-        /*
-	if (diffBitsLH > 1) {
+        if (diffBitsLH > 1) {
             patch_blob pb;
             pb.literal_min = literal_min;
-            for (size_t i = 0; i < info.num_literals; i++) {
+	    for (size_t i = 0; i < info.num_literals; i++) {
                 pb.reduced_literals[i] = literals[i] - literal_min;
             }
 
@@ -363,22 +364,26 @@ if (info.cid == ERR_CHUNK && info.tid == ERR_THREAD) {
             // fallback to DIRECT encoding.
             // The decision to use patched base was based on zigzag values, but the
             // actual patching is done on base reduced literals.
+	    
             if ((pb.bits100p - pb.bits95p) != 0) {
-                preparePatchedBlob1(info, pb);
+            
+	    // if (false) {
+
+		 preparePatchedBlob1(info, pb);
                 writePatchedBasedValues(info, pb);
                 return;
             } else {
-                writeDirectValues(info);
+
+		    writeDirectValues(info);
                 return;
             }
-        }
-       */
-//	else {
+        } else {
             // if difference in bits between 95th percentile and 100th percentile is
             // 0, then patch length will become 0. Hence we will fallback to direct
-            writeDirectValues(info);
+
+	    writeDirectValues(info);
             return;
-  //      }
+        }
     }
 
     __host__ __device__
@@ -528,6 +533,7 @@ if (info.cid == ERR_CHUNK && info.tid == ERR_THREAD) {
             (get_encoded_bit_width(pb.bits95p) << 1) | 
             ((varlen & 0x100) >> 8));
 
+
         // 8 bit from 9 bit length
         const uint8_t headerSecondByte = static_cast<uint8_t>(varlen & 0xff);
 
@@ -562,7 +568,6 @@ printf("header patched with pb %d with fbw %d \n", pb.patch_width, (get_encoded_
         // write the base value using fixed bytes in big endian order
         for(int32_t i = static_cast<int32_t>(val_bytes - 1); i >= 0; i--) {
             char b = static_cast<char>(((pb.literal_min >> (i * 8)) & 0xff));
-
             info.write_value(b);
         }
 
@@ -578,24 +583,25 @@ printf("header patched with pb %d with fbw %d \n", pb.patch_width, (get_encoded_
         // for (int i=0; i<pb.patch_len; ++i) {
         //     printf("p:%ld\n", pb.gap_patch_list[i]);
         // }
-        write_unaligned_ints(pb.gap_patch_list, pb.patch_len, closestFixedBits, info); //TODO
+	write_unaligned_ints(pb.gap_patch_list, pb.patch_len, closestFixedBits, info); //TODO
 
         // reset run length
         info.var_runlen = 0;
         info.num_literals = 0;
     }
 
-    __global__ void kernel_encode(INPUT_T* in, const uint64_t in_n_bytes, const uint32_t n_chunks, uint8_t* out, uint64_t *offset) {
+    __global__ void kernel_encode(INPUT_T* in, const uint64_t in_n_bytes, const uint32_t n_chunks, uint8_t* out, uint64_t *offset, uint64_t CHUNK_SIZE) {
         uint64_t tid = blockDim.x * blockIdx.x + threadIdx.x;
         if (tid < n_chunks) {
-            block_encode(tid, in, in_n_bytes, out, &offset[tid + 1]);
+            block_encode(tid, in, in_n_bytes, out, &offset[tid + 1], CHUNK_SIZE);
         }
     }
 
-    __host__ __device__ void block_encode(const uint64_t tid, INPUT_T* in, const uint64_t in_n_bytes, uint8_t* out, uint64_t* offset) {
+    __host__ __device__ void block_encode(const uint64_t tid, INPUT_T* in, const uint64_t in_n_bytes, uint8_t* out, uint64_t* offset, uint64_t CHUNK_SIZE) {
         encode_info<> info;
-        info.output = out + tid * OUTPUT_CHUNK_SIZE;
-
+        uint64_t OUTPUT_CHUNK_SIZE = CHUNK_SIZE * 2;
+ 	info.output = out + tid * OUTPUT_CHUNK_SIZE;
+ 
         INPUT_T prev_delta;
 
         auto& num_literals = info.num_literals;
@@ -733,20 +739,21 @@ printf("header patched with pb %d with fbw %d \n", pb.patch_width, (get_encoded_
         // printf("thread %llu write out #bytes %u\n", tid, info.potision);
     }
 
-    __host__ __device__ void shift_data(const uint8_t* in, uint8_t* out, const uint64_t* ptr, const uint64_t tid) {
+    __host__ __device__ void shift_data(const uint8_t* in, uint8_t* out, const uint64_t* ptr, const uint64_t tid, uint64_t CHUNK_SIZE) {
+        uint64_t OUTPUT_CHUNK_SIZE = 2 * CHUNK_SIZE;
         const auto* cur_in = in + tid * OUTPUT_CHUNK_SIZE;
         uint8_t* cur_out = out + ptr[tid];
         memcpy(cur_out, cur_in, sizeof(uint8_t) * (ptr[tid + 1] - ptr[tid]));
     }
 
-    __global__ void kernel_shift_data(const uint8_t* in, uint8_t* out, const uint64_t* ptr, const uint64_t n_chunks) {
+    __global__ void kernel_shift_data(const uint8_t* in, uint8_t* out, const uint64_t* ptr, const uint64_t n_chunks, uint64_t CHUNK_SIZE) {
         uint64_t tid = blockDim.x * blockIdx.x + threadIdx.x;
-        if (tid < n_chunks) shift_data(in, out, ptr, tid);
+        if (tid < n_chunks) shift_data(in, out, ptr, tid, CHUNK_SIZE);
     }
 
-    __host__ void compress_gpu(const INPUT_T* in, const uint64_t in_n_bytes, uint8_t*& out, uint64_t& out_n_bytes) {
+    __host__ void compress_gpu(const INPUT_T* in, const uint64_t in_n_bytes, uint8_t*& out, uint64_t& out_n_bytes, uint64_t CHUNK_SIZE) {
         initialize_bit_maps();
-        
+        uint64_t OUTPUT_CHUNK_SIZE = CHUNK_SIZE * 2;
         uint32_t n_chunks = (in_n_bytes - 1) / CHUNK_SIZE + 1;
         INPUT_T* d_in;
         uint8_t *d_out, *d_shift;
@@ -763,7 +770,7 @@ printf("header patched with pb %d with fbw %d \n", pb.patch_width, (get_encoded_
         // printf("chunks: %u\n", n_chunks);
         // printf("output chunk size: %lu\n", OUTPUT_CHUNK_SIZE);
 
-        kernel_encode<<<grid_size, BLK_SIZE>>>(d_in, in_n_bytes, n_chunks, d_out, d_ptr);
+        kernel_encode<<<grid_size, BLK_SIZE>>>(d_in, in_n_bytes, n_chunks, d_out, d_ptr, CHUNK_SIZE);
         cuda_err_chk(cudaDeviceSynchronize());
 
         thrust::inclusive_scan(thrust::device, d_ptr, d_ptr + n_chunks + 1, d_ptr);
@@ -773,7 +780,7 @@ printf("header patched with pb %d with fbw %d \n", pb.patch_width, (get_encoded_
         // printf("output bytes: %lu\n", data_n_bytes);
 
         cudaMalloc((void**)&d_shift, data_n_bytes * sizeof(uint8_t));
-        kernel_shift_data<<<grid_size, BLK_SIZE>>>(d_out, d_shift, d_ptr, n_chunks);
+        kernel_shift_data<<<grid_size, BLK_SIZE>>>(d_out, d_shift, d_ptr, n_chunks, CHUNK_SIZE);
         cuda_err_chk(cudaDeviceSynchronize());
     	
 

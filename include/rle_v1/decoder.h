@@ -433,11 +433,7 @@ inflate(uint8_t* comp_ptr, uint8_t* out, const uint64_t* const col_len_ptr, cons
     __shared__ simt::atomic<uint8_t,simt::thread_scope_block> h[32];
     __shared__ simt::atomic<uint8_t,simt::thread_scope_block> t[32];
 
-    __shared__ decomp_write_queue_ele<DATA_TYPE> out_queue_[32][queue_size];
-    __shared__ simt::atomic<uint8_t,simt::thread_scope_block> out_h[32];
-    __shared__ simt::atomic<uint8_t,simt::thread_scope_block> out_t[32];
-
-    __shared__ COMP_COL_TYPE local_queue[32][8];
+    __shared__ COMP_COL_TYPE local_queue[32][2];
 
     uint64_t col_len = (col_len_ptr[32 * (blockIdx.x) + threadIdx.x]);
 
@@ -461,9 +457,9 @@ inflate(uint8_t* comp_ptr, uint8_t* out, const uint64_t* const col_len_ptr, cons
     
         queue<COMP_COL_TYPE> in_queue(in_queue_[threadIdx.x], h + threadIdx.x, t + threadIdx.x, queue_size);
         queue<decomp_write_queue_ele<DATA_TYPE>> out_queue(out_queue_[threadIdx.x], out_h + threadIdx.x, out_t + threadIdx.x, queue_size);
-        input_stream<COMP_COL_TYPE, 8> s(&in_queue, (uint32_t)col_len, local_queue[threadIdx.x]);
+        input_stream<COMP_COL_TYPE, 2> s(&in_queue, (uint32_t)col_len, local_queue[threadIdx.x]);
         decompress_output<DATA_TYPE> d((out + CHUNK_SIZE * (blockIdx.x )));
-        decoder_warp<COMP_COL_TYPE, DATA_TYPE, 8>(s, out_queue, d, CHUNK_SIZE, (DATA_TYPE*)(out + CHUNK_SIZE * blockIdx.x), COMP_COL_LEN);
+        decoder_warp<COMP_COL_TYPE, DATA_TYPE, 2>(s, out_queue, d, CHUNK_SIZE, (DATA_TYPE*)(out + CHUNK_SIZE * blockIdx.x), COMP_COL_LEN);
 
     }
 

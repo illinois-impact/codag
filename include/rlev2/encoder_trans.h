@@ -5,10 +5,11 @@
 #include "encoder.h"
 
 namespace rlev2 {
-    template<bool should_write, int READ_UNIT>
-    __global__ void block_encode(INPUT_T* in, const uint64_t in_n_bytes, 
-            uint8_t* out, col_len_t* acc_col_len, blk_off_t* blk_off) {
+    template<bool should_write, int READ_UNIT, typename COMP_TYPE>
+    __global__ void block_encode(INPUT_T* in2, const uint64_t in_n_bytes, 
+            uint8_t* out, col_len_t* acc_col_len, blk_off_t* blk_off, uint64_t CHUNK_SIZE) {
 
+	    COMP_TYPE* in = (COMP_TYPE*) in2;
 __shared__ unsigned long long int blk_len;
 
         uint32_t tid = threadIdx.x;
@@ -24,8 +25,8 @@ if (!should_write) {
     }
     __syncthreads();
 }
-        uint64_t in_start_limit = min((cid + 1) * CHUNK_SIZE, in_n_bytes) / sizeof(INPUT_T);
-        uint64_t in_start = cid * CHUNK_SIZE / sizeof(INPUT_T) + tid * READ_UNIT;
+        uint64_t in_start_limit = min((cid + 1) * CHUNK_SIZE, in_n_bytes) / sizeof(COMP_TYPE);
+        uint64_t in_start = cid * CHUNK_SIZE / sizeof(COMP_TYPE) + tid * READ_UNIT;
 
         //TODO: Make this more intelligent
         // uint8_t* out_4B = blk_off[cid] - blk_off[0] + WRITE_UNIT * tid;
@@ -58,11 +59,12 @@ if (!should_write) {
         // printf("thread %d with chunksize %ld\n", tid, mychunk_size);
         while (true) {
             if (in_start + curr_read_offset >= in_start_limit) break;
-            auto val = in[in_start + curr_read_offset]; curr_read_offset ++;
+            uint64_t val = in[in_start + curr_read_offset]; curr_read_offset ++;
 #ifdef DEBUG
 if (should_write  && cid == ERR_CHUNK && tid == ERR_THREAD) printf("thread %u read %u at offset %lu\n", tid, val, in_start + curr_read_offset);
 #endif
-            if (curr_read_offset == READ_UNIT) {
+
+	    if (curr_read_offset == READ_UNIT) {
                 in_start += BLK_SIZE * READ_UNIT;
                 curr_read_offset = 0;
             }
@@ -86,7 +88,8 @@ if (should_write  && cid == ERR_CHUNK && tid == ERR_THREAD) printf("thread %u re
             }
 
             INPUT_T curr_delta = val - literals[num_literals - 1];
-            if (prev_delta == 0 && curr_delta == 0) {
+          //  if(threadIdx.x == 0 && blockIdx.x == 0) printf("cur delta: %llu past delta: %llu \n", (unsigned long long) curr_delta, (unsigned long long) info.deltas[0]);
+	    if (prev_delta == 0 && curr_delta == 0) {
                 // fixed run length
                 literals[num_literals ++] = val;
                 if (var_runlen > 0) {
@@ -106,9 +109,14 @@ if (should_write  && cid == ERR_CHUNK && tid == ERR_THREAD) printf("thread %u re
                         literals[ii] = val;
                         info.deltas[ii] = 0;
                     }
+
                     num_literals = MINIMUM_REPEAT;
                 }
 
+		else if(fix_runlen >= MINIMUM_REPEAT){
+			
+			info.deltas[0] = 0;
+		}
                 if (info.fix_runlen == MAX_LITERAL_SIZE) {
                     determineEncoding(info);
                 }
@@ -118,8 +126,14 @@ if (should_write  && cid == ERR_CHUNK && tid == ERR_THREAD) printf("thread %u re
 
             if (info.fix_runlen >= MINIMUM_REPEAT) {
                 if (info.fix_runlen <= MAX_SHORT_REPEAT_LENGTH) {
-                    writeShortRepeatValues(info);
+            //          if(threadIdx.x == 0 && blockIdx.x == 0) printf("short val: %lx\n", val);
+			writeShortRepeatValues(info);
                 } else {
+	//		if(threadIdx.x == 0 && blockIdx.x == 0){ printf("delta runlen: %lu val: %lx\n",(unsigned long) info.fix_runlen,  val);
+	//			for(int ii = 0 ; ii < info.fix_runlen; ii++){
+	//				printf("delta data: %llu\n", (unsigned long long) info.deltas[ii]);
+	//			}	
+	//		}
                     info.is_fixed_delta = true;
 #ifdef DEBUG
 if (cid == ERR_CHUNK && tid == ERR_THREAD) {
@@ -247,12 +261,12 @@ if (!should_write) {
 // }
     }
 
-    template <int READ_UNIT>
+    template <int READ_UNIT, typename COMP_TYPE>
     __host__
-    void compress_gpu_transpose(const INPUT_T* const in, const uint64_t in_n_bytes, uint8_t*& out, uint64_t& out_n_bytes,
-                    uint64_t& out_n_chunks, blk_off_t *&blk_off, col_len_t *&col_len) {
-        printf("Calling compress kernel.\n");
+    void compress_gpu_transpose(const INPUT_T* const in, const uint64_t in_n_bytes, uint8_t*& out, uint64_t& out_n_bytes, uint64_t& meta_data_size,
+                    uint64_t& out_n_chunks,blk_off_t *&blk_off, col_len_t *&col_len, uint64_t CHUNK_SIZE) {
 
+	uint64_t OUTPUT_CHUNK_SIZE = 2* CHUNK_SIZE;
         const uint64_t padded_n_bytes = ((in_n_bytes - 1) / CHUNK_SIZE + 1) * CHUNK_SIZE;
 
         uint32_t n_chunks = (padded_n_bytes - 1) / CHUNK_SIZE + 1;
@@ -262,7 +276,7 @@ if (!should_write) {
         uint8_t *d_out, *d_out_transpose;
         col_len_t *d_col_len, *d_acc_col_len; //accumulated col len 
         blk_off_t *d_blk_off;
-        
+        meta_data_size =  sizeof(col_len_t) * n_chunks * BLK_SIZE +   sizeof(blk_off_t) * (n_chunks + 1);
 	    cuda_err_chk(cudaMalloc(&d_in, padded_n_bytes));
 	    cuda_err_chk(cudaMemset(d_in, 0, padded_n_bytes));
         cuda_err_chk(cudaMalloc(&d_out, n_chunks * OUTPUT_CHUNK_SIZE));
@@ -274,8 +288,8 @@ if (!should_write) {
         
         initialize_bit_maps();
 
-        block_encode<false, READ_UNIT><<<n_chunks, BLK_SIZE>>>(d_in, padded_n_bytes, 
-                d_out, d_col_len,  d_blk_off);
+        block_encode<false, READ_UNIT, COMP_TYPE><<<n_chunks, BLK_SIZE>>>(d_in, padded_n_bytes, 
+                d_out, d_col_len,  d_blk_off, CHUNK_SIZE);
 
 	    cuda_err_chk(cudaDeviceSynchronize()); 
 
@@ -285,8 +299,8 @@ if (!should_write) {
         thrust::inclusive_scan(thrust::device, d_col_len, d_col_len + n_chunks * BLK_SIZE, d_acc_col_len);
 	    cuda_err_chk(cudaDeviceSynchronize()); 
 
-        block_encode<true, READ_UNIT><<<n_chunks, BLK_SIZE>>>(d_in, padded_n_bytes, 
-                            d_out, d_acc_col_len,  d_blk_off);
+        block_encode<true, READ_UNIT, COMP_TYPE><<<n_chunks, BLK_SIZE>>>(d_in, padded_n_bytes, 
+                            d_out, d_acc_col_len,  d_blk_off, CHUNK_SIZE);
 	    cuda_err_chk(cudaDeviceSynchronize()); 
 
         
