@@ -275,7 +275,7 @@ void reader_warp(decompress_input< COMP_COL_TYPE>& in, queue<COMP_COL_TYPE>& rq)
 template <typename COMP_COL_TYPE, typename DATA_TYPE, size_t in_buff_len = 4>
 //__forceinline__ 
 __device__
-void decoder_warp(input_stream<COMP_COL_TYPE, in_buff_len>& s, queue<decomp_write_queue_ele<DATA_TYPE>>& mq,  decompress_output<DATA_TYPE>& out, uint64_t CHUNK_SIZE, DATA_TYPE* out_buf, int COMP_COL_LEN) {
+void decoder_warp(input_stream<COMP_COL_TYPE, in_buff_len>& s,  decompress_output<DATA_TYPE>& out, uint64_t CHUNK_SIZE, DATA_TYPE* out_buf, int COMP_COL_LEN) {
 
     int test_idx = 40;
 
@@ -439,8 +439,6 @@ inflate(uint8_t* comp_ptr, uint8_t* out, const uint64_t* const col_len_ptr, cons
 
     h[threadIdx.x] = 0;
     t[threadIdx.x] = 0;
-    out_h[threadIdx.x] = 0;
-    out_t[threadIdx.x] = 0;
 
     //if(blockIdx.x == 1 && threadIdx.x == 0) printf("blk offset: %llu\n",blk_offset_ptr[blockIdx.x ] );
 
@@ -456,10 +454,9 @@ inflate(uint8_t* comp_ptr, uint8_t* out, const uint64_t* const col_len_ptr, cons
     else if (threadIdx.y == 1) {
     
         queue<COMP_COL_TYPE> in_queue(in_queue_[threadIdx.x], h + threadIdx.x, t + threadIdx.x, queue_size);
-        queue<decomp_write_queue_ele<DATA_TYPE>> out_queue(out_queue_[threadIdx.x], out_h + threadIdx.x, out_t + threadIdx.x, queue_size);
         input_stream<COMP_COL_TYPE, 2> s(&in_queue, (uint32_t)col_len, local_queue[threadIdx.x]);
         decompress_output<DATA_TYPE> d((out + CHUNK_SIZE * (blockIdx.x )));
-        decoder_warp<COMP_COL_TYPE, DATA_TYPE, 2>(s, out_queue, d, CHUNK_SIZE, (DATA_TYPE*)(out + CHUNK_SIZE * blockIdx.x), COMP_COL_LEN);
+        decoder_warp<COMP_COL_TYPE, DATA_TYPE, 2>(s, d, CHUNK_SIZE, (DATA_TYPE*)(out + CHUNK_SIZE * blockIdx.x), COMP_COL_LEN);
 
     }
 
