@@ -1,5 +1,6 @@
 #include <common.h>
-#include <brle/brle_trans.h>
+//#include <brle/brle_trans.h>
+#include <brle/rle_v1_writing_warp.h>
 #include <unistd.h>
 #include <iostream>
 #include <cstring>
@@ -11,21 +12,25 @@
 #include <chrono>
 
 int main(int argc, char** argv) {
-    if (argc < 3) {
-      std::cerr << "Please provide arguments\n";
+    if (argc < 5) {
+      std::cerr << "Please provide arguments input output input_bytes read_bytes \n";
       exit(1);
     }
 
     bool decomp = (strcmp(argv[1],"-d")==0);
-    if (decomp && (argc < 4)) {
-      std::cerr << "Please provide arguments\n";
+    if (decomp && (argc < 6)) {
+      std::cerr << "Please provide arguments input output -d input_bytes read_bytes \n";
       exit(1);
     }
 
     const char* input = decomp ? argv[2] : argv[1];
     const char* output = decomp ? argv[3] : argv[2];
+    const char* s_input_bytes = decomp ? argv[4] : argv[3];
+    const char* s_read_bytes = decomp ? argv[5] : argv[4];
 
-    
+    int input_bytes = std::atoi(s_input_bytes);
+    int read_bytes = std::atoi(s_read_bytes);
+
     std::chrono::high_resolution_clock::time_point total_start = std::chrono::high_resolution_clock::now();
     int in_fd;
     struct stat in_sb;
@@ -58,10 +63,79 @@ int main(int argc, char** argv) {
     uint64_t out_size;
     std::chrono::high_resolution_clock::time_point compress_start = std::chrono::high_resolution_clock::now();
     if (!decomp) {
-        brle_trans::compress_gpu(in_, &out_, in_sb.st_size, &out_size);
+    	    if((input_bytes) == 1 && (read_bytes) == 1){
+	    	    brle_trans::compress_gpu<uint8_t, uint8_t>(in_, &out_, in_sb.st_size, &out_size);
+	        }
+
+            else if((input_bytes) == 1 && (read_bytes) == 2){
+                brle_trans::compress_gpu<uint8_t, uint16_t>(in_, &out_, in_sb.st_size, &out_size);
+            }
+
+            else if((input_bytes) == 1 && (read_bytes) == 4){
+                brle_trans::compress_gpu<uint8_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
+            }
+
+
+            else if((input_bytes) == 2 && (read_bytes) == 2){
+                brle_trans::compress_gpu<uint16_t, uint16_t>(in_, &out_, in_sb.st_size, &out_size);
+            }
+
+            else if((input_bytes) == 2 && (read_bytes) == 4){
+                brle_trans::compress_gpu<uint16_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
+            }
+
+            else if((input_bytes) == 4 && (read_bytes) == 4){
+                brle_trans::compress_gpu<uint32_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
+            }
+	
+	    else if((input_bytes) == 8 && (read_bytes) == 8){
+                brle_trans::compress_gpu<uint64_t, uint64_t>(in_, &out_, in_sb.st_size, &out_size);
+            }
+
+            
+            else {
+                      std::cerr << "read bytes should be multiple of input bytes \n";
+            }
+
+        //brle_trans::compress_gpu<uint8_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
     }
     else {
-        brle_trans::decompress_gpu(in_, &out_, in_sb.st_size, &out_size);
+
+            if((input_bytes) == 1 && (read_bytes) == 1){
+                brle_trans::decompress_gpu<uint8_t, uint8_t>(in_, &out_, in_sb.st_size, &out_size);
+            }
+
+            else if((input_bytes) == 1 && (read_bytes) == 2){
+                brle_trans::decompress_gpu<uint8_t, uint16_t>(in_, &out_, in_sb.st_size, &out_size);
+            }
+
+            else if((input_bytes) == 1 && (read_bytes) == 4){
+                brle_trans::decompress_gpu<uint8_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
+            }
+
+
+            else if((input_bytes) == 2 && (read_bytes) == 2){
+                brle_trans::decompress_gpu<uint16_t, uint16_t>(in_, &out_, in_sb.st_size, &out_size);
+            }
+
+            else if((input_bytes) == 2 && (read_bytes) == 4){
+                brle_trans::decompress_gpu<uint16_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
+            }
+
+            else if((input_bytes) == 4 && (read_bytes) == 4){
+                brle_trans::decompress_gpu<uint32_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
+            }
+            
+	    else if((input_bytes) == 8 && (read_bytes) == 8){
+                brle_trans::decompress_gpu<uint64_t, uint64_t>(in_, &out_, in_sb.st_size, &out_size);
+            }
+
+	    else {
+                      std::cerr << "read bytes should be multiple of input bytes \n";
+            }
+
+
+        //brle_trans::decompress_gpu<uint8_t, uint32_t>(in_, &out_, in_sb.st_size, &out_size);
     }
 
     std::chrono::high_resolution_clock::time_point compress_end = std::chrono::high_resolution_clock::now();

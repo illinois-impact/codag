@@ -108,7 +108,11 @@ namespace lzss {
     }
 
 
+<<<<<<< HEAD
 	__device__ void decompress_func_new(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const blk_off, const uint64_t* const col_len, const uint8_t* const col_map) {
+=======
+	__device__ void decompress_func(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const blk_off, const uint64_t* const col_len, const uint8_t* const col_map) {
+>>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 		uint8_t hist[HIST_SIZE] = {DEFAULT_CHAR};
 		uint64_t hist_head = 0;
 		uint64_t hist_count = 0;
@@ -322,7 +326,11 @@ namespace lzss {
 
 
 
+<<<<<<< HEAD
 	__global__ void compress_init_func_new(const uint8_t* const in, const uint64_t in_n_bytes,  
+=======
+	__global__ void compress_init_func(const uint8_t* const in, const uint64_t in_n_bytes,
+>>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 					   			  const uint64_t in_chunk_size, const uint64_t out_chunk_size, const uint64_t n_chunks, 
 					              uint64_t* col_len, uint64_t* blk_offset){
 
@@ -1556,6 +1564,7 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	
     }
     
+<<<<<<< HEAD
     __host__ __device__ void compress_func_var_read(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t in_chunk_size, const uint64_t out_chunk_size, const uint64_t n_chunks, uint64_t* lens, const uint64_t tid) {
 	if (tid < n_chunks) {
 	    uint64_t rem = in_n_bytes % in_chunk_size;
@@ -1882,12 +1891,19 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	}
 	
     }
+=======
+
+>>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 
 	__global__ void
     __launch_bounds__(32, 32)
 	kernel_decompress(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t out_chunk_size, const uint64_t n_chunks, const uint64_t* const blk_off, const uint64_t* const col_len, const uint8_t* const col_map) {
 	uint64_t tid = threadIdx.x + blockDim.x * blockIdx.x;
+<<<<<<< HEAD
 	decompress_func_new(in, out, in_n_bytes, out_n_bytes, out_chunk_size, n_chunks, blk_off, col_len, col_map);
+=======
+	decompress_func(in, out, in_n_bytes, out_n_bytes, out_chunk_size, n_chunks, blk_off, col_len, col_map);
+>>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
     }
     __global__ void
     __launch_bounds__(32, 32)
@@ -1900,7 +1916,11 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
     __launch_bounds__(32, 32)
     kernel_compress(const uint8_t* const in, uint8_t* out, const uint64_t in_n_bytes, const uint64_t out_n_bytes, const uint64_t in_chunk_size, const uint64_t out_chunk_size, const uint64_t n_chunks, uint64_t* lens) {
 	uint64_t tid = threadIdx.x + blockDim.x * blockIdx.x;
+<<<<<<< HEAD
 	compress_func_var_read(in, out, in_n_bytes, out_n_bytes, in_chunk_size, out_chunk_size, n_chunks, lens, tid);
+=======
+	//compress_func_var_read(in, out, in_n_bytes, out_n_bytes, in_chunk_size, out_chunk_size, n_chunks, lens, tid);
+>>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
     }
 
     __host__ __device__ void shift_data_func(const uint8_t* const in, uint8_t* out, const uint64_t* const lens, const uint64_t in_chunk_size, const uint64_t n_chunks, uint64_t tid) {
@@ -1926,7 +1946,11 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	shift_data_func(in, out, lens, in_chunk_size, n_chunks, tid);
     }
 
+<<<<<<< HEAD
     __host__ void compress_gpu(const uint8_t* const in, uint8_t** out, const uint64_t in_n_bytes, uint64_t* out_n_bytes) {
+=======
+    __host__ void compress_gpu(const uint8_t* const in, const uint64_t in_n_bytes, uint8_t** out, uint64_t* out_n_bytes, uint8_t*** out_metadata, uint64_t** out_metadata_lens, uint64_t* out_metadata_num) {
+>>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 	uint8_t* d_in;
 	uint8_t* d_out;
 	uint8_t* temp;
@@ -1997,7 +2021,11 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	cuda_err_chk(cudaMemcpy(d_in, in, in_n_bytes, cudaMemcpyHostToDevice));
 
 
+<<<<<<< HEAD
 	compress_init_func_new<<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes, 
+=======
+	compress_init_func<<<n_chunks, BLK_SIZE>>>(d_in, in_n_bytes,
+>>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 											  chunk_size,exp_out_chunk_size, n_chunks,
 											  d_col_len,  d_blk_offset);
 
@@ -2043,6 +2071,7 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	cuda_err_chk(cudaMemcpy((*out), d_out, final_out_size, cudaMemcpyDeviceToHost));
 
 
+<<<<<<< HEAD
 
 	std::ofstream col_len_file ("./input_data/col_len.bin",std::ofstream::binary);
 	col_len_file.write ((const  char *)(col_len),  BLK_SIZE * num_chunk * 8);
@@ -2057,6 +2086,28 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	std::ofstream col_map_file ("./input_data/col_map.bin",std::ofstream::binary);
 	col_map_file.write ((const char *)(col_map),  BLK_SIZE * num_chunk);
 	col_map_file.close();
+=======
+	*out_metadata_num = 4;
+	*out_metadata_lens = (uint64_t*) malloc((*out_metadata_num)*sizeof(uint64_t));
+
+	(*out_metadata_lens)[0] = sizeof(uint64_t);
+	(*out_metadata_lens)[1] = (num_chunk + 1) * sizeof(uint64_t);
+	(*out_metadata_lens)[2] = BLK_SIZE * num_chunk * sizeof(uint64_t);
+	(*out_metadata_lens)[3] = BLK_SIZE * num_chunk;
+
+	(*out_metadata) = (uint8_t**) malloc((*out_metadata_num) * sizeof(uint8_t*));
+
+	(*out_metadata)[0] = (uint8_t*) malloc(sizeof(uint64_t));
+
+	memcpy((*out_metadata)[0], &chunk_size, sizeof(uint64_t));
+
+	(*out_metadata)[1] = (uint8_t*) blk_offset;
+
+	(*out_metadata)[2] = (uint8_t*) col_len;
+
+	(*out_metadata)[3] = (uint8_t*) col_map;
+
+>>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 
 
 
@@ -2072,7 +2123,11 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
     }
 
 
+<<<<<<< HEAD
  __host__ void decompress_gpu(const uint8_t* const in, uint8_t** out, const uint64_t in_n_bytes, uint64_t* out_n_bytes) {
+=======
+ __host__ int decompress_gpu(const uint8_t* const in, const uint64_t in_n_bytes, const uint8_t** const in_metadata, const uint64_t* const in_metadata_lens, const uint64_t in_metadata_num, uint8_t** out, uint64_t* out_n_bytes) {
+>>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 	uint8_t* d_in;
 	uint8_t* d_out;
 	uint64_t* d_lens;
@@ -2080,6 +2135,7 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	const uint64_t* const in_64 = (const uint64_t*) in;
 
 
+<<<<<<< HEAD
 	int blk_off_fd;
 	struct stat blk_off_sb;
 	uint64_t* blk_off;
@@ -2132,10 +2188,36 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	}
 
 	uint64_t n_chunks = (blk_off_sb.st_size/sizeof(uint64_t)) - 1;
+=======
+	uint64_t* blk_off;
+	uint64_t* col_len;
+	uint8_t* col_map;
+
+	uint64_t blk_off_count;
+	uint64_t col_len_count;
+	uint64_t col_map_count;
+	uint64_t chunk_size;
+
+	if (in_metadata_num >= 4) {
+		chunk_size = ((uint64_t*) in_metadata[0])[0];
+		blk_off = (uint64_t*) in_metadata[1];
+		col_len = (uint64_t*) in_metadata[2];
+		col_map = (uint8_t*) in_metadata[3];
+
+		blk_off_count = in_metadata_lens[1]/sizeof(uint64_t);
+		col_len_count = in_metadata_lens[2]/sizeof(uint64_t);
+		col_map_count = in_metadata_lens[3];
+
+	}
+	else
+		return -1;
+	uint64_t n_chunks = (blk_off_count) - 1;
+>>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 	uint64_t out_size = n_chunks * CHUNK_SIZE;
 
 
 	uint64_t* d_blk_off;
+<<<<<<< HEAD
 	cuda_err_chk(cudaMalloc(&d_blk_off, blk_off_sb.st_size));
 
 	uint64_t* d_col_len;
@@ -2150,6 +2232,22 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	cuda_err_chk(cudaMemcpy(d_col_len, col_len, col_len_sb.st_size, cudaMemcpyHostToDevice));
 
 	cuda_err_chk(cudaMemcpy(d_col_map, col_map, col_map_sb.st_size, cudaMemcpyHostToDevice));
+=======
+	cuda_err_chk(cudaMalloc(&d_blk_off, blk_off_count*sizeof(uint64_t)));
+
+	uint64_t* d_col_len;
+	cuda_err_chk(cudaMalloc(&d_col_len, col_len_count*sizeof(uint64_t)));
+
+	uint8_t* d_col_map;
+	cuda_err_chk(cudaMalloc(&d_col_map, col_map_count));
+
+
+	cuda_err_chk(cudaMemcpy(d_blk_off, blk_off, blk_off_count*sizeof(uint64_t), cudaMemcpyHostToDevice));
+
+	cuda_err_chk(cudaMemcpy(d_col_len, col_len, col_len_count*sizeof(uint64_t), cudaMemcpyHostToDevice));
+
+	cuda_err_chk(cudaMemcpy(d_col_map, col_map, col_map_count, cudaMemcpyHostToDevice));
+>>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 
 
 
@@ -2184,7 +2282,11 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	dim3 grid_size( n_chunks);
 	dim3 blk(BLK_SIZE,1);
 	std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
+<<<<<<< HEAD
         kernel_decompress<<<grid_size, blk>>>(d_in, d_out, in_n_bytes, out_size, CHUNK_SIZE, n_chunks, d_blk_off, d_col_len, d_col_map);
+=======
+	kernel_decompress<<<grid_size, blk>>>(d_in, d_out, in_n_bytes, out_size, CHUNK_SIZE, n_chunks, d_blk_off, d_col_len, d_col_map);
+>>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 	cuda_err_chk(cudaDeviceSynchronize());
 	std::chrono::high_resolution_clock::time_point kernel_end = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double> total = std::chrono::duration_cast<std::chrono::duration<double>>(kernel_end - kernel_start);
@@ -2195,10 +2297,20 @@ __global__  void gpu_compress_func(const uint8_t* const in, uint8_t* out, const 
 	cuda_err_chk(cudaMemcpy((*out), d_out, out_bytes, cudaMemcpyDeviceToHost));
 	printf("bytes: %llu\n",*out_n_bytes );
 
+<<<<<<< HEAD
 
 	cuda_err_chk(cudaFree(d_out));
 	cuda_err_chk(cudaFree(d_in));
 
+=======
+	cuda_err_chk(cudaFree(d_col_map));
+	cuda_err_chk(cudaFree(d_col_len));
+	cuda_err_chk(cudaFree(d_blk_off));
+	cuda_err_chk(cudaFree(d_out));
+	cuda_err_chk(cudaFree(d_in));
+
+	return 0;
+>>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
     }
 
 
