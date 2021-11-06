@@ -169,7 +169,10 @@ struct decompress_output {
 
         #pragma unroll 
         for(int i = 0; i < num_writes; i++){
-            out_ptr[write_counter + WRITE_COL_LEN * idx] = out_ptr[read_counter + WRITE_COL_LEN * idx];
+           if(write_counter + WRITE_COL_LEN * idx == 361)
+                    printf("d:%x\n", out_ptr[read_counter + WRITE_COL_LEN * idx]);
+
+	    out_ptr[write_counter + WRITE_COL_LEN * idx] = out_ptr[read_counter + WRITE_COL_LEN * idx];
             read_counter += NUM_THREAD;
             write_counter += NUM_THREAD;
         }
@@ -1036,7 +1039,7 @@ template <typename READ_COL_TYPE, size_t WRITE_COL_LEN, uint16_t queue_depth, ui
 
 
     dim3 blockD(32,3,1);
-   // num_blk = 10;
+    num_blk = 1;
     uint64_t num_tblk = (num_blk + NUM_SUBCHUNKS - 1) / NUM_SUBCHUNKS;
     std::cout << "\nnum blk: " << num_tblk << std::endl;
 
