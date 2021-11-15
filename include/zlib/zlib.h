@@ -167,11 +167,15 @@ struct decompress_output {
                 read_counter = (read_counter - orig_counter) % offset + start_counter;
         }
 
-        #pragma unroll 
-        for(int i = 0; i < num_writes; i++){
-            out_ptr[write_counter + WRITE_COL_LEN * idx] = out_ptr[read_counter + WRITE_COL_LEN * idx];
+	uint8_t num_ph =  (len +  NUM_THREAD - 1) / NUM_THREAD;
+        //#pragma unroll 
+        for(int i = 0; i < num_ph; i++){
+		if(i < num_writes){
+	    out_ptr[write_counter + WRITE_COL_LEN * idx] = out_ptr[read_counter + WRITE_COL_LEN * idx];
             read_counter += NUM_THREAD;
             write_counter += NUM_THREAD;
+		}
+		__syncwarp();
         }
     
         //set the counter
@@ -587,6 +591,7 @@ void decoder_warp_shared(input_stream<READ_COL_TYPE, in_buff_len>& s,  queue<wri
         }
         //dyamic huffman
         else if (btype == 0){
+		printf("uncomp\n");
          // s.template align_bits();
          // int32_t uncomp_len;
          // s.template fetch_n_bits<int32_t>(16, &uncomp_len);
@@ -729,7 +734,8 @@ void writer_warp(queue<write_queue_ele>& mq, decompress_output<WRITE_COL_LEN>& o
 
             deq_mask >>= f;
             deq_mask <<= f;
-        }
+       	    
+       	}
         __syncwarp();
         bool check = out.counter != (CHUNK_SIZE);
         if(threadIdx.x >= active_chunks ) check = false;
@@ -868,6 +874,7 @@ inflate(uint8_t* comp_ptr, const uint64_t* const col_len_ptr, const uint64_t* co
         queue<READ_COL_TYPE> in_queue(in_queue_[my_queue], h + my_queue , t + my_queue, in_queue_size);
         decompress_input<READ_COL_TYPE, COMP_COL_TYPE> d(comp_ptr, col_len, blk_offset_ptr[my_block_idx] / sizeof(COMP_COL_TYPE));
         reader_warp<READ_COL_TYPE, COMP_COL_TYPE, NUM_SUBCHUNKS>(d, in_queue, active_chunks);
+   	printf("tid: %i reading done\n", threadIdx.x);
     }
 
     else if (threadIdx.y == 1) {
@@ -875,7 +882,7 @@ inflate(uint8_t* comp_ptr, const uint64_t* const col_len_ptr, const uint64_t* co
         queue<write_queue_ele> out_queue(out_queue_[my_queue], out_h + my_queue, out_t + my_queue, out_queue_size);
         input_stream<READ_COL_TYPE, local_queue_size> s(&in_queue, (uint32_t)col_len, local_queue[my_queue], threadIdx.x < active_chunks);
         decoder_warp<READ_COL_TYPE, local_queue_size, NUM_SUBCHUNKS>(s, out_queue, (uint32_t) col_len, out, huff_tree_ptr, d_slot_struct, fixed_tree, s_lencnt[my_queue], s_distcnt[my_queue], s_distsym[my_queue], s_off[my_queue], active_chunks);
-
+	printf("tid: %i decoding done\n", threadIdx.x);
     }
 
     else {
@@ -986,7 +993,7 @@ template <typename READ_COL_TYPE, size_t WRITE_COL_LEN, uint16_t queue_depth, ui
 
 
     uint64_t out_bytes = chunk_size * num_blk;
-    std::cout << chunk_size << "\t" << WRITE_COL_LEN << "\t" << queue_depth << "\t"  << in_n_bytes << "\t" << blk_n_bytes + col_n_bytes;
+    std::cout << (int)NUM_SUBCHUNKS << "\t" << chunk_size << "\t" << WRITE_COL_LEN << "\t" << queue_depth << "\t"  << in_n_bytes << "\t" << blk_n_bytes + col_n_bytes;
     uint8_t* d_out;
     *out_n_bytes = data_size;
     cuda_err_chk(cudaMalloc(&d_out, out_bytes));
@@ -1036,12 +1043,10 @@ template <typename READ_COL_TYPE, size_t WRITE_COL_LEN, uint16_t queue_depth, ui
 
 
     dim3 blockD(32,3,1);
-   // num_blk = 10;
+    num_blk = 1;
     uint64_t num_tblk = (num_blk + NUM_SUBCHUNKS - 1) / NUM_SUBCHUNKS;
-    std::cout << "\nnum blk: " << num_tblk << std::endl;
 
     dim3 gridD(num_tblk,1,1);
-    std::cout << "tnum blk: " << num_tblk << std::endl;
     cudaDeviceSynchronize();
 
     std::chrono::high_resolution_clock::time_point kernel_start = std::chrono::high_resolution_clock::now();
