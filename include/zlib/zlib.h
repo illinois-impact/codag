@@ -515,12 +515,13 @@ void decoder_warp(input_stream<READ_COL_TYPE, in_buff_len>& s,  queue<write_queu
         uint32_t btype;
 
       
+	 s.template fetch_n_bits<uint32_t>(16, &btype);
+	 btype = 0;
         do{
 
-        s.template fetch_n_bits<uint32_t>(19, &btype);
+        s.template fetch_n_bits<uint32_t>(3, &btype);
 
         
-        btype >>= 16;
         blast =  (btype & 0x01);
         btype >>= 1;
         //fixed huffman
@@ -874,7 +875,6 @@ inflate(uint8_t* comp_ptr, const uint64_t* const col_len_ptr, const uint64_t* co
         queue<READ_COL_TYPE> in_queue(in_queue_[my_queue], h + my_queue , t + my_queue, in_queue_size);
         decompress_input<READ_COL_TYPE, COMP_COL_TYPE> d(comp_ptr, col_len, blk_offset_ptr[my_block_idx] / sizeof(COMP_COL_TYPE));
         reader_warp<READ_COL_TYPE, COMP_COL_TYPE, NUM_SUBCHUNKS>(d, in_queue, active_chunks);
-   	printf("tid: %i reading done\n", threadIdx.x);
     }
 
     else if (threadIdx.y == 1) {
@@ -882,7 +882,6 @@ inflate(uint8_t* comp_ptr, const uint64_t* const col_len_ptr, const uint64_t* co
         queue<write_queue_ele> out_queue(out_queue_[my_queue], out_h + my_queue, out_t + my_queue, out_queue_size);
         input_stream<READ_COL_TYPE, local_queue_size> s(&in_queue, (uint32_t)col_len, local_queue[my_queue], threadIdx.x < active_chunks);
         decoder_warp<READ_COL_TYPE, local_queue_size, NUM_SUBCHUNKS>(s, out_queue, (uint32_t) col_len, out, huff_tree_ptr, d_slot_struct, fixed_tree, s_lencnt[my_queue], s_distcnt[my_queue], s_distsym[my_queue], s_off[my_queue], active_chunks);
-	printf("tid: %i decoding done\n", threadIdx.x);
     }
 
     else {
@@ -1043,7 +1042,7 @@ template <typename READ_COL_TYPE, size_t WRITE_COL_LEN, uint16_t queue_depth, ui
 
 
     dim3 blockD(32,3,1);
-    num_blk = 1;
+    //num_blk = 1;
     uint64_t num_tblk = (num_blk + NUM_SUBCHUNKS - 1) / NUM_SUBCHUNKS;
 
     dim3 gridD(num_tblk,1,1);
