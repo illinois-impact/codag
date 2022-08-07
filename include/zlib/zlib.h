@@ -1551,7 +1551,7 @@ __global__ void
 //__launch_bounds__ (NUMTHREADS, NUMBLOCKS)
 __launch_bounds__ (32)
 
-inflate_shared_rdw_fsm(uint8_t* comp_ptr, const uint64_t* const col_len_ptr, const uint64_t* const blk_offset_ptr, uint8_t*out, dynamic_huffman* huff_tree_ptr,
+inflate_shared_rdw_fsm(uint8_t* comp_ptr, const uint64_t* const blk_offset_ptr, uint8_t*out, dynamic_huffman* huff_tree_ptr,
   const fix_huffman* const fixed_tree, uint64_t CHUNK_SIZE, uint64_t num_chunks) {
     
     __shared__ READ_COL_TYPE in_queue_[NUM_SUBCHUNKS][in_queue_size];
@@ -1584,13 +1584,12 @@ namespace deflate {
 
 template <typename READ_COL_TYPE, size_t WRITE_COL_LEN, uint16_t queue_depth, uint8_t NUM_SUBCHUNKS, bool All_Thread_Decoding = true>
  __host__ void decompress_gpu(const uint8_t* const in, uint8_t** out, const uint64_t in_n_bytes, uint64_t* out_n_bytes,
-  uint64_t* col_len_f, const uint64_t col_n_bytes, uint64_t* blk_offset_f, const uint64_t blk_n_bytes, uint64_t chunk_size) {
+  uint64_t* blk_offset_f, const uint64_t blk_n_bytes, uint64_t chunk_size) {
 
     uint64_t num_blk = ((uint64_t) blk_n_bytes / sizeof(uint64_t)) - 2;
     uint64_t data_size = blk_offset_f[0];
 
     uint8_t* d_in;
-    uint64_t* d_col_len;
     uint64_t* d_blk_offset;
     uint8_t* d_out;
 
@@ -1598,17 +1597,14 @@ template <typename READ_COL_TYPE, size_t WRITE_COL_LEN, uint16_t queue_depth, ui
     int num_sm = 108;
    
     cuda_err_chk(cudaMalloc(&d_in, in_n_bytes));
-    cuda_err_chk(cudaMalloc(&d_col_len,col_n_bytes));
     cuda_err_chk(cudaMalloc(&d_blk_offset, blk_n_bytes));
 
     cuda_err_chk(cudaMemcpy(d_in, in, in_n_bytes, cudaMemcpyHostToDevice));
-    cuda_err_chk(cudaMemcpy(d_col_len, col_len_f, col_n_bytes, cudaMemcpyHostToDevice));
     cuda_err_chk(cudaMemcpy(d_blk_offset, blk_offset_f+1, blk_n_bytes, cudaMemcpyHostToDevice));
 
 
 
     uint64_t out_bytes = chunk_size * num_blk;
-    std::cout << (int)NUM_SUBCHUNKS << "\t" << chunk_size << "\t" << WRITE_COL_LEN << "\t" << queue_depth << "\t"  << in_n_bytes << "\t" << blk_n_bytes + col_n_bytes;
 
     *out_n_bytes = data_size;
     cuda_err_chk(cudaMalloc(&d_out, out_bytes));
@@ -1678,7 +1674,7 @@ template <typename READ_COL_TYPE, size_t WRITE_COL_LEN, uint16_t queue_depth, ui
     }
 
     else{
-        inflate_shared_rdw_fsm<uint32_t, READ_COL_TYPE, 1, 256, 8, 64 , 4, WRITE_COL_LEN> <<<num_blk,blockD2>>> (d_in, d_col_len, d_blk_offset, d_out, d_tree, d_f_tree, chunk_size, num_blk);
+        inflate_shared_rdw_fsm<uint32_t, READ_COL_TYPE, 1, 256, 8, 64 , 4, WRITE_COL_LEN> <<<num_blk,blockD2>>> (d_in,  d_blk_offset, d_out, d_tree, d_f_tree, chunk_size, num_blk);
     }
 
     cuda_err_chk(cudaDeviceSynchronize());
@@ -1700,7 +1696,6 @@ template <typename READ_COL_TYPE, size_t WRITE_COL_LEN, uint16_t queue_depth, ui
     cuda_err_chk(cudaMemcpy((*out), d_out, data_size, cudaMemcpyDeviceToHost));
     cuda_err_chk(cudaFree(d_out));
     cuda_err_chk(cudaFree(d_in));
-    cuda_err_chk(cudaFree(d_col_len));
     cuda_err_chk(cudaFree(d_blk_offset));
  }
 

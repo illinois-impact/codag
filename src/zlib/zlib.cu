@@ -23,23 +23,17 @@ bool output_check(uint8_t *a, uint64_t a_size, uint8_t *b, uint64_t b_size) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 6) {
-    std::cerr << "Please provide arguments input output chunk_size  \n";
+	bool decomp = true;
+
+  if (decomp && (argc < 5)) {
+    std::cerr << "Please provide arguments  input output blk_offset chunk_size\n";
     exit(1);
   }
 
-  bool decomp = (strcmp(argv[1], "-d") == 0);
-  if (decomp && (argc < 7)) {
-    std::cerr << "Please provide arguments -d input output  col_len blk_offset "
-                 "chunk_size \n";
-    exit(1);
-  }
-
-  const char *input = decomp ? argv[2] : argv[1];
-  const char *output = decomp ? argv[3] : argv[2];
-  const char *col_f = decomp ? argv[4] : argv[3];
-  const char *blk_f = decomp ? argv[5] : argv[4];
-  const char *s_input_bytes = decomp ? argv[6] : argv[5];
+  const char *input = argv[1];
+  const char *output =  argv[2];
+  const char *blk_f =  argv[3];
+  const char *s_input_bytes = argv[4];
 
   uint64_t chunk_size = (uint64_t)(std::atoi(s_input_bytes));
 
@@ -72,10 +66,6 @@ int main(int argc, char **argv) {
     printf("Fatal Error: OUTPUT File open error\n");
     return -1;
   }
-  if ((col_fd = open(col_f, O_RDONLY)) == 0) {
-    printf("Fatal Error: COL_LEN File open error\n");
-    return -1;
-  }
   if ((blk_fd = open(blk_f, O_RDONLY)) == 0) {
     printf("Fatal Error: BLK_OFFSET File open error\n");
     return -1;
@@ -90,15 +80,6 @@ int main(int argc, char **argv) {
     return -1;
   }
   uint8_t *in_ = (uint8_t *)in;
-
-  fstat(col_fd, &col_sb);
-  col = mmap(nullptr, col_sb.st_size, PROT_READ, MAP_PRIVATE, col_fd, 0);
-  if (col == (void *)-1) {
-    printf("Fatal Error: COL_LEN Mapping error\n");
-    return -1;
-  }
-  uint64_t *col_ = (uint64_t *)col;
-
   fstat(blk_fd, &blk_sb);
   blk = mmap(nullptr, blk_sb.st_size, PROT_READ, MAP_PRIVATE, blk_fd, 0);
   if (blk == (void *)-1) {
@@ -119,7 +100,7 @@ int main(int argc, char **argv) {
     uint64_t out_size2;
     bool out_check = true;
     deflate::decompress_gpu<uint32_t, 262144 / 2, 64, 8, 1>(
-        in_, &out_, in_sb.st_size, &out_size, col_, col_sb.st_size, blk_,
+        in_, &out_, in_sb.st_size, &out_size,  blk_,
         blk_sb.st_size, chunk_size);
   }
 
@@ -139,14 +120,11 @@ int main(int argc, char **argv) {
 
   if (munmap(out, out_size) == -1)
     PRINT_ERROR;
-  if (munmap(col, col_sb.st_size) == -1)
-    PRINT_ERROR;
   if (munmap(blk, blk_sb.st_size) == -1)
     PRINT_ERROR;
 
   close(in_fd);
   close(out_fd);
-  close(col_fd);
   close(blk_fd);
   free(out_);
   std::chrono::high_resolution_clock::time_point total_end =
