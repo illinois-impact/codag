@@ -1,8 +1,6 @@
 #ifndef _RLEV2_UTIL_H_
 #define _RLEV2_UTIL_H_
 
-<<<<<<< HEAD
-=======
 #define READ_TYPE int64_t
 
 typedef longlong2 VEC_T;
@@ -11,23 +9,15 @@ typedef std::conditional<sizeof(READ_TYPE) == sizeof(int32_t), uint32_t, uint64_
 typedef std::conditional<sizeof(READ_TYPE) == sizeof(int32_t), uint32_t, uint64_t>::type UINPUT_T;
 //typedef std::conditional<sizeof(READ_TYPE) == sizeof(int32_t), longlong2, longlong4>::type VEC_T;
 
->>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 #define ERR_THREAD 0
 #define ERR_CHUNK 0
 
 // #define DEBUG
-<<<<<<< HEAD
-constexpr int WRITE_VEC_SIZE = 4;
-constexpr int READ_GRANULARITY = 4;
-constexpr int DECODE_UNIT = 4; 
-constexpr uint64_t VARINT_MASK = 0x7f;
-=======
 
 constexpr int WRITE_VEC_SIZE = 4;
 constexpr int READ_GRANULARITY = 1;
 constexpr int DECODE_UNIT = 4; 
 constexpr UINPUT_T VARINT_MASK = 0x7f;
->>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 
 constexpr uint8_t HEADER_MASK         = 0xc0;
 constexpr uint8_t HEADER_SHORT_REPEAT = 0b00000000;
@@ -69,24 +59,11 @@ constexpr uint8_t __CLOSEST_ALIGNED_FIXED_BIT_MAP[65] = {
 }; 
 
 constexpr   uint16_t BLK_SIZE_()                { return (32); }
-<<<<<<< HEAD
-constexpr   uint64_t CHUNK_SIZE_()              { return (1024 * 32); }
-=======
 constexpr   uint64_t CHUNK_SIZE_()              { return (1024 * 8 * 5); }
->>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 constexpr   uint32_t INPUT_BUFFER_SIZE()        { return (32); }
 constexpr   uint16_t MAX_LITERAL_SIZE_()        { return 128; }
 constexpr   uint8_t  MINIMUM_REPEAT_()          { return 3; }
 constexpr   uint8_t  MAXIMUM_REPEAT_()          { return 127 + MINIMUM_REPEAT_(); }
-<<<<<<< HEAD
-constexpr   uint64_t OUTPUT_CHUNK_SIZE_()       { return CHUNK_SIZE_() + (CHUNK_SIZE_() - 1) / MAX_LITERAL_SIZE_() + 1; }
-// constexpr   uint64_t OUTPUT_CHUNK_SIZE_()       { return CHUNK_SIZE_() * 2; }
-constexpr   uint32_t MAX_SHORT_REPEAT_LENGTH_() { return 10; }
-constexpr   uint8_t  HIST_LEN_()                { return 32; }
-
-#define BLK_SIZE                               BLK_SIZE_()			  
-#define CHUNK_SIZE                           CHUNK_SIZE_()
-=======
 // constexpr   uint64_t OUTPUT_CHUNK_SIZE_()       { return CHUNK_SIZE_() + (CHUNK_SIZE_() - 1) / MAX_LITERAL_SIZE_() * 4; }
 constexpr   uint64_t OUTPUT_CHUNK_SIZE_()       { return CHUNK_SIZE_() * 2; }
 constexpr   uint32_t MAX_SHORT_REPEAT_LENGTH_() { return 10; }
@@ -95,16 +72,11 @@ constexpr   uint8_t  HIST_LEN_()                { return 32; }
 #define WARP_SIZE                                       32
 #define BLK_SIZE                               BLK_SIZE_()			  
 //#define CHUNK_SIZE                           CHUNK_SIZE_()
->>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 #define INPUT_BUFFER_SIZE              INPUT_BUFFER_SIZE()
 #define MAX_LITERAL_SIZE               MAX_LITERAL_SIZE_()
 #define MINIMUM_REPEAT                   MINIMUM_REPEAT_()
 #define MAXIMUM_REPEAT                   MAXIMUM_REPEAT_()
-<<<<<<< HEAD
-#define OUTPUT_CHUNK_SIZE             OUTPUT_CHUNK_SIZE_() // TODO: this is probably not a tight bound.
-=======
 //#define OUTPUT_CHUNK_SIZE             OUTPUT_CHUNK_SIZE_() // TODO: this is probably not a tight bound.
->>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 #define MAX_SHORT_REPEAT_LENGTH MAX_SHORT_REPEAT_LENGTH_()
 #define HIST_LEN                               HIST_LEN_()
 
@@ -134,10 +106,6 @@ __constant__ uint8_t device_decode_bit_map[32];
 
 __host__ __device__
 inline uint8_t get_encoded_bit_width(const uint8_t& bitwidth) {
-<<<<<<< HEAD
-    // static constexpr uint8_t *encode_bit_map = bit_maps;
-=======
->>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 #ifdef __CUDA_ARCH__
     return device_encode_bit_map[bitwidth];
 #else
@@ -147,10 +115,6 @@ inline uint8_t get_encoded_bit_width(const uint8_t& bitwidth) {
 
 __host__ __device__
 inline uint8_t get_decoded_bit_width(const uint8_t& bitwidth) {
-<<<<<<< HEAD
-    // static constexpr uint8_t *decode_bit_map = bit_maps + 65 + 65 + 65;
-=======
->>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 #ifdef __CUDA_ARCH__
     return device_decode_bit_map[bitwidth];
 #else
@@ -160,10 +124,6 @@ inline uint8_t get_decoded_bit_width(const uint8_t& bitwidth) {
 
 __host__ __device__
 inline uint8_t get_closest_bit(const uint8_t bit) {
-<<<<<<< HEAD
-    // static constexpr uint8_t *closest_bit_map = bit_maps + 65;
-=======
->>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 #ifdef __CUDA_ARCH__
     return device_closest_bit_map[bit];
 #else
@@ -173,10 +133,6 @@ inline uint8_t get_closest_bit(const uint8_t bit) {
 
 __host__ __device__
 inline uint8_t get_closest_aligned_bit(const uint8_t bit) {
-<<<<<<< HEAD
-    // static constexpr uint8_t *closest_aligned_bit_map = bit_maps + 65 + 65;
-=======
->>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 #ifdef __CUDA_ARCH__
     return device_closest_aligned_bit_map[bit];
 #else
@@ -190,14 +146,10 @@ inline void initialize_bit_maps() {
     cudaMemcpyToSymbol(device_closest_aligned_bit_map, &__CLOSEST_ALIGNED_FIXED_BIT_MAP, 65 * sizeof(uint8_t));
     cudaMemcpyToSymbol(device_decode_bit_map, &__BIT_WIDTH_DECODE_MAP, 32 * sizeof(uint8_t));
 }
-<<<<<<< HEAD
-constexpr int DECODE_BUFFER_COUNT = 128;
-=======
 
 constexpr int SINGLE_WARP_DECODE_BUFFER_COUNT = 128;
 constexpr int DECODE_BUFFER_COUNT = 32;
 constexpr int DECODE_BUFFER4_COUNT = DECODE_BUFFER_COUNT / 4;
->>>>>>> 2521a77ef53923581b24ccb056259d35bc9e5a2d
 constexpr int SHM_BUFFER_COUNT = DECODE_BUFFER_COUNT * BLK_SIZE;
 
 #endif
